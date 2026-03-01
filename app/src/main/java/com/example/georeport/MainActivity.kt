@@ -2,7 +2,7 @@ package com.example.georeport
 
 import android.Manifest
 import android.content.Intent
-import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.widget.Toast
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -12,12 +12,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -39,6 +41,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -424,6 +428,15 @@ private fun ReportDetailDialog(report: ReportWithPhotos, onDismiss: () -> Unit) 
                 Text("Fotos (${report.photos.size}/5)")
                 report.photos.take(5).forEachIndexed { index, photo ->
                     Text("${index + 1}. ${photo.filePath.substringAfterLast('/')}")
+                    val bitmap = remember(photo.id) { loadPhotoBitmap(photo) }
+                    bitmap?.let {
+                        Image(
+                            bitmap = it.asImageBitmap(),
+                            contentDescription = "Foto ${index + 1}",
+                            modifier = Modifier.fillMaxWidth().height(180.dp),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
                 }
             }
         },
@@ -459,13 +472,10 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
     ) { refreshLocation() }
 
     val takePhotoLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap: Bitmap? ->
-        if (bitmap != null) {
-            val photoFile = createImageFile(context.filesDir)
-            saveBitmapToFile(bitmap, photoFile)
-            currentPhotoPath = photoFile.absolutePath
-            viewModel.savePhoto(reportId, photoFile.absolutePath, latitude, longitude)
+        contract = ActivityResultContracts.TakePicture()
+    ) { success: Boolean ->
+        if (success && !currentPhotoPath.isNullOrBlank()) {
+            viewModel.savePhoto(reportId, currentPhotoPath!!, latitude, longitude)
             unsaved = true
         }
     }
@@ -553,7 +563,14 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
                 return@Button
             }
 
-            takePhotoLauncher.launch(null)
+            val photoFile = createImageFile(context.filesDir)
+            currentPhotoPath = photoFile.absolutePath
+            val outputUri = FileProvider.getUriForFile(
+                context,
+                "com.example.georeport.fileprovider",
+                photoFile
+            )
+            takePhotoLauncher.launch(outputUri)
         }) {
             Text("Adicionar foto (${photos.size}/5)")
         }
@@ -652,16 +669,23 @@ private fun NumberField(label: String, value: String, onChange: (String) -> Unit
     OutlinedTextField(value = value, onValueChange = onChange, modifier = Modifier.fillMaxWidth(), label = { Text(label) })
 }
 
-
-private fun saveBitmapToFile(bitmap: Bitmap, file: File) {
-    file.outputStream().use { out ->
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)
-    }
+private fun loadPhotoBitmap(photo: com.example.georeport.data.GeoPhotoEntity): android.graphics.Bitmap? {
+    return runCatching {
+        val file = File(photo.filePath)
+        when {
+            file.exists() -> BitmapFactory.decodeFile(file.absolutePath)
+            photo.base64Data.isNotBlank() -> {
+                val raw = android.util.Base64.decode(photo.base64Data, android.util.Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(raw, 0, raw.size)
+            }
+            else -> null
+        }
+    }.getOrNull()
 }
 
 private fun createImageFile(baseDir: File): File {
     val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-    val fileName = "IMG_${formatter.format(Date())}.jpg"
+    val fileName = "IMG_${formatter.format(Date())}.png"
     val picturesDir = File(baseDir, "Pictures").apply { mkdirs() }
     return File(picturesDir, fileName)
 }

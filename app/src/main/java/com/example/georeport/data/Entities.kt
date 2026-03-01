@@ -55,6 +55,7 @@ data class GeoPhotoEntity(
     @PrimaryKey val id: String,
     val reportId: String,
     val filePath: String,
+    val base64Data: String,
     val latitude: Double?,
     val longitude: Double?,
     val capturedAt: Long,

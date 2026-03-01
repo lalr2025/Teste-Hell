@@ -22,11 +22,13 @@ class GeoReportRepository(
         latitude: Double?,
         longitude: Double?
     ) {
+        val base64Data = filePathToBase64(filePath)
         dao.insertPhoto(
             GeoPhotoEntity(
                 id = UUID.randomUUID().toString(),
                 reportId = reportId,
                 filePath = filePath,
+                base64Data = base64Data,
                 latitude = latitude,
                 longitude = longitude,
                 capturedAt = System.currentTimeMillis()
@@ -47,10 +49,7 @@ class GeoReportRepository(
                 val fileName = file.name
                 val mimeType = mimeTypeFromFileName(fileName)
                 val capturedAt = photo.capturedAt.toString()
-                val base64 = runCatching {
-                    val bytes = file.readBytes()
-                    Base64.encodeToString(bytes, Base64.NO_WRAP)
-                }.getOrDefault("")
+                val base64 = if (photo.base64Data.isNotBlank()) photo.base64Data else filePathToBase64(photo.filePath)
 
                 listOf(fileName, mimeType, capturedAt, base64)
             }
@@ -95,6 +94,14 @@ class GeoReportRepository(
             "\"$sanitized\""
         }
     }
+
+
+    private fun filePathToBase64(filePath: String): String = runCatching {
+        val file = File(filePath)
+        if (!file.exists()) return@runCatching ""
+        val bytes = file.readBytes()
+        Base64.encodeToString(bytes, Base64.NO_WRAP)
+    }.getOrDefault("")
 
     private fun mimeTypeFromFileName(fileName: String): String {
         val extension = fileName.substringAfterLast('.', "").lowercase(Locale.US)
