@@ -627,7 +627,7 @@ private fun NumberField(label: String, value: String, onChange: (String) -> Unit
 }
 
 
-private fun reportFormStateSaver(): Saver<ReportFormState, Any> = listSaver(
+private fun reportFormStateSaver(): Saver<ReportFormState, List<String>> = listSaver(
     save = {
         listOf(
             it.cultura,
