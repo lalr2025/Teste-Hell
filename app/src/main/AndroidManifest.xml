@@ -11,10 +11,6 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
-        <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="@string/google_maps_key" />
-
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="com.example.georeport.fileprovider"

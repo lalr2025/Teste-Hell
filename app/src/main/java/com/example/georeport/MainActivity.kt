@@ -9,9 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,10 +19,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
@@ -39,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -51,22 +46,22 @@ import com.example.georeport.ui.ReportFormState
 import com.example.georeport.ui.ReportViewModel
 import com.example.georeport.ui.ReportViewModelFactory
 import com.google.android.gms.location.LocationServices
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
-import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.CameraPositionState
-import com.google.maps.android.compose.GoogleMap
-import com.google.maps.android.compose.Marker
-import com.google.maps.android.compose.MarkerState
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Marker
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        Configuration.getInstance().userAgentValue = packageName
 
         val repository = GeoReportRepository(AppDatabase.getInstance(this).appDao())
 
@@ -130,12 +125,7 @@ private fun MapScreen(
     onMarkerClick: (ReportWithPhotos) -> Unit,
     onExportCsv: () -> Unit
 ) {
-    val defaultLatLng = LatLng(-14.235, -51.925)
-    val cameraPositionState = remember {
-        CameraPositionState(
-            position = CameraPosition.fromLatLngZoom(defaultLatLng, 3.8f)
-        )
-    }
+    val context = LocalContext.current
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -146,27 +136,43 @@ private fun MapScreen(
             Button(onClick = onExportCsv) { Text("Baixar CSV") }
         }
 
-        GoogleMap(
+        AndroidView(
             modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraPositionState
-        ) {
-            reports.forEach { rw ->
-                val lat = rw.report.latitude
-                val lon = rw.report.longitude
-                if (lat != null && lon != null) {
-                    Marker(
-                        state = MarkerState(position = LatLng(lat, lon)),
-                        title = "📍 ${rw.report.cultura}",
-                        snippet = "${rw.report.cultivar} • ${formatDate(rw.report.createdAt)}",
-                        icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE),
-                        onClick = {
-                            onMarkerClick(rw)
-                            true
-                        }
-                    )
+            factory = { ctx ->
+                MapView(ctx).apply {
+                    setTileSource(TileSourceFactory.MAPNIK)
+                    setMultiTouchControls(true)
+                    controller.setZoom(4.5)
+                    controller.setCenter(GeoPoint(-14.235, -51.925))
                 }
+            },
+            update = { mapView ->
+                Configuration.getInstance().userAgentValue = context.packageName
+
+                mapView.overlays.removeAll(mapView.overlays.filterIsInstance<Marker>())
+
+                reports.forEach { rw ->
+                    val lat = rw.report.latitude
+                    val lon = rw.report.longitude
+                    if (lat != null && lon != null) {
+                        val marker = Marker(mapView).apply {
+                            position = GeoPoint(lat, lon)
+                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                            title = "📍 ${rw.report.cultura}"
+                            subDescription = "${rw.report.cultivar} • ${formatDate(rw.report.createdAt)}"
+                            setOnMarkerClickListener { selected, _ ->
+                                onMarkerClick(rw)
+                                selected.showInfoWindow()
+                                true
+                            }
+                        }
+                        mapView.overlays.add(marker)
+                    }
+                }
+
+                mapView.invalidate()
             }
-        }
+        )
     }
 }
 
@@ -283,7 +289,7 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
         DropdownField("16- Presença de Daninhas", form.presencaDaninhas, viewModel.simNaoOptions) { form = form.copy(presencaDaninhas = it); unsaved = true }
         TextField("17- Nome(s) da(s) Daninha(s)", form.nomesDaninhas) { form = form.copy(nomesDaninhas = it); unsaved = true }
         DropdownField("18- Intensidade da Infestação", form.intensidadeInfestacao, viewModel.intensidadeOptions) { form = form.copy(intensidadeInfestacao = it); unsaved = true }
-        DropdownField("19- Cobertura de Palha", form.coberturaPalha, viewModel.coberturaOptions) { form = form.copy(coberturaPalha = it); unsaved = true }
+        DropdownField("18- Cobertura de Palha", form.coberturaPalha, viewModel.coberturaOptions) { form = form.copy(coberturaPalha = it); unsaved = true }
         DropdownField("19- Intensidade Erosão", form.intensidadeErosao, viewModel.erosaoOptions) { form = form.copy(intensidadeErosao = it); unsaved = true }
         TextField("20- Cor do Solo", form.corSolo) { form = form.copy(corSolo = it); unsaved = true }
         DropdownField("21- Textura Solo", form.texturaSolo, viewModel.texturaOptions) { form = form.copy(texturaSolo = it); unsaved = true }
@@ -338,37 +344,49 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DropdownField(label: String, value: String, options: List<String>, onChange: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
+    var showDialog by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(
-            value = value,
-            onValueChange = {},
-            readOnly = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { expanded = true },
-            label = { Text(label) },
-            trailingIcon = { Text(if (expanded) "▲" else "▼") }
-        )
+    OutlinedTextField(
+        value = value,
+        onValueChange = {},
+        readOnly = true,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(label) },
+        trailingIcon = { Text("▼") }
+    )
 
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(option) },
-                    onClick = {
-                        onChange(option)
-                        expanded = false
+    Button(onClick = { showDialog = true }) {
+        Text(if (value.isBlank()) "Selecionar opção" else "Trocar opção")
+    }
+
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = { Text(label) },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    options.forEach { option ->
+                        TextButton(
+                            onClick = {
+                                onChange(option)
+                                showDialog = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(option)
+                        }
                     }
-                )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDialog = false }) { Text("Fechar") }
             }
-        }
+        )
     }
 }
 
