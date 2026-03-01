@@ -104,6 +104,7 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
             reports = reports,
             onNewReport = { screen = Screen.FORM },
             onMarkerClick = { selectedReport = it },
+            onRefreshMap = { viewModel.refreshReports() },
             onExportCsv = {
                 val csv = viewModel.csvContent()
                 val file = File(context.cacheDir, "relatorios_georeferenciados.csv")
@@ -137,6 +138,7 @@ private fun MapScreen(
     reports: List<ReportWithPhotos>,
     onNewReport: () -> Unit,
     onMarkerClick: (ReportWithPhotos) -> Unit,
+    onRefreshMap: () -> Unit,
     onExportCsv: () -> Unit
 ) {
     val context = LocalContext.current
@@ -174,6 +176,7 @@ private fun MapScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(onClick = onNewReport) { Text("Novo relatório") }
+            Button(onClick = onRefreshMap) { Text("Atualizar mapa") }
             Button(onClick = onExportCsv) { Text("Baixar CSV") }
             Button(onClick = { showLayers = true }) { Text("Layers") }
         }
@@ -549,7 +552,7 @@ private fun NumberField(label: String, value: String, onChange: (String) -> Unit
 }
 
 
-private fun reportFormStateSaver(): Saver<ReportFormState, List<String>> = listSaver(
+private fun reportFormStateSaver(): Saver<ReportFormState, Any> = listSaver(
     save = {
         listOf(
             it.cultura,
