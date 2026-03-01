@@ -16,6 +16,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -72,7 +74,8 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.XYTileSource
+import org.osmdroid.tileprovider.MapTileIndex
+import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
@@ -191,39 +194,11 @@ private fun MapScreen(
     var showLayers by rememberSaveable { mutableStateOf(false) }
     var expandedClusterKey by rememberSaveable { mutableStateOf<String?>(null) }
     var offlineMode by rememberSaveable { mutableStateOf(false) }
+    var autoCentered by rememberSaveable { mutableStateOf(false) }
 
-    val roadsSource = remember {
-        XYTileSource(
-            "EsriWorldStreetMap",
-            0,
-            19,
-            256,
-            ".jpg",
-            arrayOf("https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/")
-        )
-    }
-
-    val satelliteSource = remember {
-        XYTileSource(
-            "EsriWorldImagery",
-            0,
-            19,
-            256,
-            ".jpg",
-            arrayOf("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/")
-        )
-    }
-
-    val topoSource = remember {
-        XYTileSource(
-            "EsriWorldTopoMap",
-            0,
-            19,
-            256,
-            ".jpg",
-            arrayOf("https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/")
-        )
-    }
+    val roadsSource = remember { esriTileSource("World_Street_Map") }
+    val satelliteSource = remember { esriTileSource("World_Imagery") }
+    val topoSource = remember { esriTileSource("World_Topo_Map") }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -286,16 +261,17 @@ private fun MapScreen(
             shape = RoundedCornerShape(14.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
         ) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    MapView(ctx).apply {
-                        setMultiTouchControls(true)
-                        controller.setZoom(4.5)
-                        controller.setCenter(GeoPoint(-14.235, -51.925))
-                    }
-                },
-                update = { mapView ->
+            Box(modifier = Modifier.fillMaxSize()) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        MapView(ctx).apply {
+                            setMultiTouchControls(true)
+                            controller.setZoom(4.5)
+                            controller.setCenter(GeoPoint(-14.235, -51.925))
+                        }
+                    },
+                    update = { mapView ->
                 Configuration.getInstance().userAgentValue = context.packageName
 
                 mapView.setUseDataConnection(!offlineMode)
@@ -318,6 +294,15 @@ private fun MapScreen(
                     val lat = rw.report.latitude
                     val lon = rw.report.longitude
                     if (lat != null && lon != null) MarkerItem(rw, lat, lon) else null
+                }
+
+                if (!autoCentered && points.isNotEmpty()) {
+                    val latestPoint = points.maxByOrNull { it.report.report.createdAt }
+                    latestPoint?.let {
+                        mapView.controller.setCenter(GeoPoint(it.lat, it.lon))
+                        mapView.controller.setZoom(16.0)
+                        autoCentered = true
+                    }
                 }
 
                 val zoom = mapView.zoomLevelDouble
@@ -408,8 +393,19 @@ private fun MapScreen(
                 if (expandedClusterKey != null && !clusters.containsKey(expandedClusterKey)) {
                     expandedClusterKey = null
                 }
+                    }
+                )
+
+                Button(
+                    onClick = { showLayers = true },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp)
+                ) {
+                    Text("🗺 Camadas")
+                }
             }
-        )
+        }
         }
     }
 }
@@ -740,6 +736,25 @@ private fun createImageFile(context: Context): File {
     val fileName = "IMG_${formatter.format(Date())}.jpg"
     val picturesDir = File(context.filesDir, "Pictures/GeoReport").apply { mkdirs() }
     return File(picturesDir, fileName)
+}
+
+private fun esriTileSource(layerName: String): OnlineTileSourceBase {
+    val base = "https://services.arcgisonline.com/ArcGIS/rest/services/$layerName/MapServer/tile"
+    return object : OnlineTileSourceBase(
+        "Esri$layerName",
+        0,
+        19,
+        256,
+        ".jpg",
+        arrayOf(base)
+    ) {
+        override fun getTileURLString(pMapTileIndex: Long): String {
+            val zoom = MapTileIndex.getZoom(pMapTileIndex)
+            val x = MapTileIndex.getX(pMapTileIndex)
+            val y = MapTileIndex.getY(pMapTileIndex)
+            return "$base/$zoom/$y/$x"
+        }
+    }
 }
 
 private fun ReportEntity.toFormState(): ReportFormState = ReportFormState(
