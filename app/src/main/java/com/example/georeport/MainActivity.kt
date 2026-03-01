@@ -30,6 +30,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -53,6 +56,7 @@ import java.util.Locale
 import java.util.UUID
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
@@ -75,6 +79,12 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class Screen { MAP, FORM }
+
+private enum class BasemapOption {
+    ESTRADAS,
+    SATELITE,
+    TOPOGRAFIA
+}
 
 @Composable
 private fun GeoReportApp(viewModel: ReportViewModel) {
@@ -126,6 +136,32 @@ private fun MapScreen(
     onExportCsv: () -> Unit
 ) {
     val context = LocalContext.current
+    var basemap by rememberSaveable { mutableStateOf(BasemapOption.ESTRADAS) }
+    var showLayers by rememberSaveable { mutableStateOf(false) }
+
+    val satelliteSource = remember {
+        XYTileSource(
+            "EsriWorldImagery",
+            0,
+            19,
+            256,
+            ".jpg",
+            arrayOf(
+                "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"
+            )
+        )
+    }
+
+    val topoSource = remember {
+        XYTileSource(
+            "OpenTopoMap",
+            0,
+            17,
+            256,
+            ".png",
+            arrayOf("https://tile.opentopomap.org/")
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -134,13 +170,36 @@ private fun MapScreen(
         ) {
             Button(onClick = onNewReport) { Text("Novo relatório") }
             Button(onClick = onExportCsv) { Text("Baixar CSV") }
+            Button(onClick = { showLayers = true }) { Text("Layers") }
+        }
+
+        if (showLayers) {
+            AlertDialog(
+                onDismissRequest = { showLayers = false },
+                title = { Text("Selecionar mapa base") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { basemap = BasemapOption.ESTRADAS; showLayers = false }) {
+                            Text("Estradas")
+                        }
+                        TextButton(onClick = { basemap = BasemapOption.SATELITE; showLayers = false }) {
+                            Text("Satélite")
+                        }
+                        TextButton(onClick = { basemap = BasemapOption.TOPOGRAFIA; showLayers = false }) {
+                            Text("Topografia")
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showLayers = false }) { Text("Fechar") }
+                }
+            )
         }
 
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxWidth().weight(1f),
             factory = { ctx ->
                 MapView(ctx).apply {
-                    setTileSource(TileSourceFactory.MAPNIK)
                     setMultiTouchControls(true)
                     controller.setZoom(4.5)
                     controller.setCenter(GeoPoint(-14.235, -51.925))
@@ -148,6 +207,12 @@ private fun MapScreen(
             },
             update = { mapView ->
                 Configuration.getInstance().userAgentValue = context.packageName
+
+                when (basemap) {
+                    BasemapOption.ESTRADAS -> mapView.setTileSource(TileSourceFactory.MAPNIK)
+                    BasemapOption.SATELITE -> mapView.setTileSource(satelliteSource)
+                    BasemapOption.TOPOGRAFIA -> mapView.setTileSource(topoSource)
+                }
 
                 mapView.overlays.removeAll(mapView.overlays.filterIsInstance<Marker>())
 
@@ -206,13 +271,13 @@ private fun ReportDetailDialog(report: ReportWithPhotos, onDismiss: () -> Unit) 
 private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
     val context = LocalContext.current
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
-    val reportId = remember { UUID.randomUUID().toString() }
-    var form by remember { mutableStateOf(ReportFormState()) }
-    var latitude by remember { mutableStateOf<Double?>(null) }
-    var longitude by remember { mutableStateOf<Double?>(null) }
-    var currentPhotoPath by remember { mutableStateOf<String?>(null) }
-    var unsaved by remember { mutableStateOf(false) }
-    var askLeave by remember { mutableStateOf(false) }
+    val reportId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
+    var form by rememberSaveable(stateSaver = reportFormStateSaver()) { mutableStateOf(ReportFormState()) }
+    var latitude by rememberSaveable { mutableStateOf<Double?>(null) }
+    var longitude by rememberSaveable { mutableStateOf<Double?>(null) }
+    var currentPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var unsaved by rememberSaveable { mutableStateOf(false) }
+    var askLeave by rememberSaveable { mutableStateOf(false) }
     val photos by viewModel.photos.collectAsState()
 
     fun refreshLocation() {
@@ -241,7 +306,7 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
         if (unsaved) askLeave = true else onFinish()
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(reportId) {
         requestPermissionsLauncher.launch(
             arrayOf(
                 Manifest.permission.CAMERA,
@@ -297,6 +362,17 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
 
         Button(onClick = {
             if (photos.size >= 5) return@Button
+
+            val hasCameraPermission = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!hasCameraPermission) {
+                requestPermissionsLauncher.launch(arrayOf(Manifest.permission.CAMERA))
+                return@Button
+            }
+
             val photoFile = createImageFile(context.filesDir)
             currentPhotoPath = photoFile.absolutePath
             val photoUri = FileProvider.getUriForFile(context, "com.example.georeport.fileprovider", photoFile)
@@ -399,6 +475,64 @@ private fun TextField(label: String, value: String, onChange: (String) -> Unit) 
 private fun NumberField(label: String, value: String, onChange: (String) -> Unit) {
     OutlinedTextField(value = value, onValueChange = onChange, modifier = Modifier.fillMaxWidth(), label = { Text(label) })
 }
+
+
+private fun reportFormStateSaver(): Saver<ReportFormState, List<String>> = listSaver(
+    save = {
+        listOf(
+            it.cultura,
+            it.cultivar,
+            it.faseFenologica,
+            it.espacamentoLinha,
+            it.espacamentoEntreLinha,
+            it.altura,
+            it.comprimentoPivoRaiz,
+            it.distribuicaoSistemaRadicular,
+            it.sanidadeGeral,
+            it.presencaPragas,
+            it.nomesPragas,
+            it.intensidadeDanosPragas,
+            it.presencaDoencas,
+            it.nomesDoencas,
+            it.intensidadeDanosDoencas,
+            it.presencaDaninhas,
+            it.nomesDaninhas,
+            it.intensidadeInfestacao,
+            it.coberturaPalha,
+            it.intensidadeErosao,
+            it.corSolo,
+            it.texturaSolo,
+            it.compactacao
+        )
+    },
+    restore = {
+        ReportFormState(
+            cultura = it[0],
+            cultivar = it[1],
+            faseFenologica = it[2],
+            espacamentoLinha = it[3],
+            espacamentoEntreLinha = it[4],
+            altura = it[5],
+            comprimentoPivoRaiz = it[6],
+            distribuicaoSistemaRadicular = it[7],
+            sanidadeGeral = it[8],
+            presencaPragas = it[9],
+            nomesPragas = it[10],
+            intensidadeDanosPragas = it[11],
+            presencaDoencas = it[12],
+            nomesDoencas = it[13],
+            intensidadeDanosDoencas = it[14],
+            presencaDaninhas = it[15],
+            nomesDaninhas = it[16],
+            intensidadeInfestacao = it[17],
+            coberturaPalha = it[18],
+            intensidadeErosao = it[19],
+            corSolo = it[20],
+            texturaSolo = it[21],
+            compactacao = it[22]
+        )
+    }
+)
 
 private fun createImageFile(baseDir: File): File {
     val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
