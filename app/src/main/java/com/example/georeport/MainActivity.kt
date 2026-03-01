@@ -52,7 +52,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
-import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.georeport.data.AppDatabase
 import com.example.georeport.data.ReportEntity
@@ -483,11 +482,21 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
     val takePhotoLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success: Boolean ->
-        if (success && !currentPhotoPath.isNullOrBlank()) {
-            writeExifGps(currentPhotoPath!!, latitude, longitude)
-            viewModel.savePhoto(reportId, currentPhotoPath!!, latitude, longitude)
-            unsaved = true
+        val path = currentPhotoPath
+        if (!success) {
+            path?.let { runCatching { File(it).delete() } }
+            currentPhotoPath = null
+            return@rememberLauncherForActivityResult
         }
+
+        if (!path.isNullOrBlank()) {
+            val photoFile = File(path)
+            if (photoFile.exists()) {
+                viewModel.savePhoto(reportId, path, latitude, longitude)
+                unsaved = true
+            }
+        }
+        currentPhotoPath = null
     }
 
     BackHandler {
@@ -723,17 +732,6 @@ private fun createImageFile(baseDir: File): File {
 }
 
 
-private fun writeExifGps(filePath: String, latitude: Double?, longitude: Double?) {
-    if (latitude == null || longitude == null) return
-    runCatching {
-        val exif = ExifInterface(filePath)
-        exif.setGpsInfo(android.location.Location("georeport").apply {
-            this.latitude = latitude
-            this.longitude = longitude
-        })
-        exif.saveAttributes()
-    }
-}
 
 private fun formatDate(ts: Long): String =
     SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()).format(Date(ts))

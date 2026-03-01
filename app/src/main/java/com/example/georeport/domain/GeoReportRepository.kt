@@ -1,6 +1,8 @@
 package com.example.georeport.domain
 
 import android.util.Base64
+import androidx.exifinterface.media.ExifInterface
+import android.location.Location
 import com.example.georeport.data.AppDao
 import com.example.georeport.data.GeoPhotoEntity
 import com.example.georeport.data.ReportEntity
@@ -27,14 +29,18 @@ class GeoReportRepository(
         filePath: String,
         latitude: Double?,
         longitude: Double?
-    ) {
-        val base64Data = ""
+    ) = withContext(Dispatchers.IO) {
+        val file = File(filePath)
+        if (!file.exists()) return@withContext
+
+        writeExifGps(filePath, latitude, longitude)
+
         dao.insertPhoto(
             GeoPhotoEntity(
                 id = UUID.randomUUID().toString(),
                 reportId = reportId,
                 filePath = filePath,
-                base64Data = base64Data,
+                base64Data = "",
                 latitude = latitude,
                 longitude = longitude,
                 capturedAt = System.currentTimeMillis()
@@ -178,6 +184,18 @@ class GeoReportRepository(
             zip.putNextEntry(ZipEntry("metadata/reports.json"))
             zip.write(metadataJson.toByteArray())
             zip.closeEntry()
+        }
+    }
+
+    private fun writeExifGps(filePath: String, latitude: Double?, longitude: Double?) {
+        if (latitude == null || longitude == null) return
+        runCatching {
+            val exif = ExifInterface(filePath)
+            exif.setGpsInfo(Location("georeport").apply {
+                this.latitude = latitude
+                this.longitude = longitude
+            })
+            exif.saveAttributes()
         }
     }
 
