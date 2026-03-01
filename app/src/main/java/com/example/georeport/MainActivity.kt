@@ -7,7 +7,6 @@ import android.graphics.BitmapFactory
 import android.widget.Toast
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.os.Environment
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -139,7 +138,7 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
                 viewModel.exportZip(file) { result ->
                     exportingZip = false
                     result.onSuccess {
-                        val uri = FileProvider.getUriForFile(context, "com.example.georeport.fileprovider", file)
+                        val uri = FileProvider.getUriForFile(context, "${BuildConfig.APPLICATION_ID}.fileprovider", file)
                         val intent = Intent(Intent.ACTION_SEND).apply {
                             type = "application/zip"
                             putExtra(Intent.EXTRA_STREAM, uri)
@@ -589,7 +588,7 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
             currentPhotoPath = photoFile.absolutePath
             val outputUri = FileProvider.getUriForFile(
                 context,
-                "com.example.georeport.fileprovider",
+                "${BuildConfig.APPLICATION_ID}.fileprovider",
                 photoFile
             )
             takePhotoLauncher.launch(outputUri)
@@ -730,8 +729,7 @@ private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int,
 private fun createImageFile(context: Context): File {
     val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
     val fileName = "IMG_${formatter.format(Date())}.jpg"
-    val baseDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: context.filesDir
-    val picturesDir = File(baseDir, "GeoReport").apply { mkdirs() }
+    val picturesDir = File(context.filesDir, "Pictures/GeoReport").apply { mkdirs() }
     return File(picturesDir, fileName)
 }
 
