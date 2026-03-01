@@ -3,6 +3,7 @@ package com.example.georeport.domain
 import android.util.Base64
 import androidx.exifinterface.media.ExifInterface
 import android.location.Location
+import android.graphics.BitmapFactory
 import com.example.georeport.data.AppDao
 import com.example.georeport.data.GeoPhotoEntity
 import com.example.georeport.data.ReportEntity
@@ -33,6 +34,7 @@ class GeoReportRepository(
         val file = File(filePath)
         if (!file.exists()) return@withContext
 
+        optimizeJpegFile(filePath)
         writeExifGps(filePath, latitude, longitude)
 
         dao.insertPhoto(
@@ -185,6 +187,36 @@ class GeoReportRepository(
             zip.write(metadataJson.toByteArray())
             zip.closeEntry()
         }
+    }
+
+    private fun optimizeJpegFile(filePath: String) {
+        runCatching {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(filePath, bounds)
+            val sampleSize = calculateInSampleSize(bounds, 1920, 1920)
+
+            val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            val bitmap = BitmapFactory.decodeFile(filePath, decodeOptions) ?: return@runCatching
+
+            val outFile = File(filePath)
+            outFile.outputStream().use { output ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, output)
+            }
+            bitmap.recycle()
+        }
+    }
+
+    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val (height, width) = options.outHeight to options.outWidth
+        var inSampleSize = 1
+        if (height > reqHeight || width > reqWidth) {
+            var halfHeight = height / 2
+            var halfWidth = width / 2
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize.coerceAtLeast(1)
     }
 
     private fun writeExifGps(filePath: String, latitude: Double?, longitude: Double?) {

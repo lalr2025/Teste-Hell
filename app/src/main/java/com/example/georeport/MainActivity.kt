@@ -1,11 +1,13 @@
 package com.example.georeport
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.widget.Toast
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Environment
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -236,6 +238,7 @@ private fun MapScreen(
             Button(onClick = onNewReport) { Text("Novo relatório") }
             Button(onClick = onRefreshMap) { Text("Atualizar mapa") }
             Button(onClick = onExportZip) { Text("Baixar ZIP") }
+            Text("v${BuildConfig.VERSION_NAME}")
             Button(onClick = { showLayers = true }) { Text("🗺 Camadas") }
             Button(onClick = {
                 offlineMode = !offlineMode
@@ -582,7 +585,7 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
                 return@Button
             }
 
-            val photoFile = createImageFile(context.filesDir)
+            val photoFile = createImageFile(context)
             currentPhotoPath = photoFile.absolutePath
             val outputUri = FileProvider.getUriForFile(
                 context,
@@ -724,10 +727,11 @@ private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int,
     return inSampleSize.coerceAtLeast(1)
 }
 
-private fun createImageFile(baseDir: File): File {
+private fun createImageFile(context: Context): File {
     val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
     val fileName = "IMG_${formatter.format(Date())}.jpg"
-    val picturesDir = File(baseDir, "Pictures").apply { mkdirs() }
+    val baseDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: context.filesDir
+    val picturesDir = File(baseDir, "GeoReport").apply { mkdirs() }
     return File(picturesDir, fileName)
 }
 
