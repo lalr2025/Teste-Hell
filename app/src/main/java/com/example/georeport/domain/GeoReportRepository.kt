@@ -22,22 +22,24 @@ class GeoReportRepository(
     private val dao: AppDao
 ) {
     suspend fun saveReport(report: ReportEntity) {
-        dao.insertReport(report)
+        dao.insertReportIfAbsent(report)
+        dao.updateReport(report)
     }
 
     suspend fun savePhoto(
         reportId: String,
         filePath: String,
         latitude: Double?,
-        longitude: Double?
+        longitude: Double?,
+        altitude: Double?
     ) = withContext(Dispatchers.IO) {
         val file = File(filePath)
         if (!file.exists()) return@withContext
 
-        ensureReportExists(reportId, latitude, longitude)
+        ensureReportExists(reportId, latitude, longitude, altitude)
 
         optimizeJpegFile(filePath)
-        writeExifGps(filePath, latitude, longitude)
+        writeExifGps(filePath, latitude, longitude, altitude)
 
         dao.insertPhoto(
             GeoPhotoEntity(
@@ -55,16 +57,18 @@ class GeoReportRepository(
     private suspend fun ensureReportExists(
         reportId: String,
         latitude: Double?,
-        longitude: Double?
+        longitude: Double?,
+        altitude: Double?
     ) {
         if (dao.reportExists(reportId)) return
 
-        dao.insertReport(
+        dao.insertReportIfAbsent(
             ReportEntity(
                 id = reportId,
                 createdAt = System.currentTimeMillis(),
                 latitude = latitude,
                 longitude = longitude,
+                altitude = altitude,
                 cultura = "",
                 cultivar = "",
                 faseFenologica = "",
@@ -174,6 +178,8 @@ class GeoReportRepository(
                         zip.closeEntry()
                     }
 
+                    val sizeBytes = if (photoFile.exists()) photoFile.length() else 0L
+
                     photosJson.put(
                         JSONObject()
                             .put("id", photo.id)
@@ -183,6 +189,8 @@ class GeoReportRepository(
                             .put("capturedAt", photo.capturedAt)
                             .put("latitude", photo.latitude)
                             .put("longitude", photo.longitude)
+                            .put("sizeBytes", sizeBytes)
+                            .put("absolutePath", photo.filePath)
                             .put("base64", photo.base64Data)
                     )
                 }
@@ -193,6 +201,7 @@ class GeoReportRepository(
                         .put("createdAt", report.createdAt)
                         .put("latitude", report.latitude)
                         .put("longitude", report.longitude)
+                        .put("altitude", report.altitude)
                         .put("cultura", report.cultura)
                         .put("cultivar", report.cultivar)
                         .put("faseFenologica", report.faseFenologica)
@@ -261,13 +270,14 @@ class GeoReportRepository(
         return inSampleSize.coerceAtLeast(1)
     }
 
-    private fun writeExifGps(filePath: String, latitude: Double?, longitude: Double?) {
+    private fun writeExifGps(filePath: String, latitude: Double?, longitude: Double?, altitude: Double?) {
         if (latitude == null || longitude == null) return
         runCatching {
             val exif = ExifInterface(filePath)
             exif.setGpsInfo(Location("georeport").apply {
                 this.latitude = latitude
                 this.longitude = longitude
+                if (altitude != null) this.altitude = altitude
             })
             exif.saveAttributes()
         }

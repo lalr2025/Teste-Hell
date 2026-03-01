@@ -13,6 +13,7 @@ data class ReportEntity(
     val createdAt: Long,
     val latitude: Double?,
     val longitude: Double?,
+    val altitude: Double?,
     val cultura: String,
     val cultivar: String,
     val faseFenologica: String,

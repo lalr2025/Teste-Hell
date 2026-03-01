@@ -5,11 +5,15 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Update
 
 @Dao
 interface AppDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertReport(report: ReportEntity)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertReportIfAbsent(report: ReportEntity): Long
+
+    @Update
+    suspend fun updateReport(report: ReportEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPhoto(photo: GeoPhotoEntity)

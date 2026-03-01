@@ -72,7 +72,6 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
@@ -98,10 +97,9 @@ class MainActivity : ComponentActivity() {
 private enum class Screen { MAP, FORM }
 
 private enum class BasemapOption {
-    ESTRADAS,
-    SATELITE_MAPBOX,
-    TOPOGRAFIA,
-    TRANSPORTE_PUBLICO
+    ESTRADAS_ESRI,
+    SATELITE_ESRI,
+    TOPOGRAFIA_ESRI
 }
 
 @Composable
@@ -110,6 +108,7 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
     val reports by viewModel.reports.collectAsState()
     var screen by rememberSaveable { mutableStateOf(Screen.MAP) }
     var selectedReport by remember { mutableStateOf<ReportWithPhotos?>(null) }
+    var editingReport by remember { mutableStateOf<ReportEntity?>(null) }
     var exportingZip by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.refreshReports() }
@@ -128,7 +127,10 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
     if (screen == Screen.MAP) {
         MapScreen(
             reports = reports,
-            onNewReport = { screen = Screen.FORM },
+            onNewReport = {
+                editingReport = null
+                screen = Screen.FORM
+            },
             onMarkerClick = { selectedReport = it },
             onRefreshMap = { viewModel.refreshReports() },
             onExportZip = {
@@ -153,12 +155,22 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
         )
 
         selectedReport?.let { report ->
-            ReportDetailDialog(report = report, onDismiss = { selectedReport = null })
+            ReportDetailDialog(
+                report = report,
+                onDismiss = { selectedReport = null },
+                onEdit = {
+                    editingReport = report.report
+                    selectedReport = null
+                    screen = Screen.FORM
+                }
+            )
         }
     } else {
         FormScreen(
             viewModel = viewModel,
+            initialReport = editingReport,
             onFinish = {
+                editingReport = null
                 viewModel.refreshReports()
                 screen = Screen.MAP
             }
@@ -175,54 +187,41 @@ private fun MapScreen(
     onExportZip: () -> Unit
 ) {
     val context = LocalContext.current
-    var basemap by rememberSaveable { mutableStateOf(BasemapOption.ESTRADAS) }
+    var basemap by rememberSaveable { mutableStateOf(BasemapOption.ESTRADAS_ESRI) }
     var showLayers by rememberSaveable { mutableStateOf(false) }
     var expandedClusterKey by rememberSaveable { mutableStateOf<String?>(null) }
     var offlineMode by rememberSaveable { mutableStateOf(false) }
 
-    val mapboxToken = remember { context.getString(R.string.mapbox_access_token).trim() }
+    val roadsSource = remember {
+        XYTileSource(
+            "EsriWorldStreetMap",
+            0,
+            19,
+            256,
+            ".jpg",
+            arrayOf("https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/")
+        )
+    }
 
-    val satelliteSource = remember(mapboxToken) {
-        if (mapboxToken.isNotBlank()) {
-            XYTileSource(
-                "MapboxSatellite",
-                0,
-                19,
-                256,
-                ".jpg90?access_token=$mapboxToken",
-                arrayOf("https://api.mapbox.com/v4/mapbox.satellite/")
-            )
-        } else {
-            XYTileSource(
-                "EsriWorldImagery",
-                0,
-                19,
-                256,
-                ".jpg",
-                arrayOf("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/")
-            )
-        }
+    val satelliteSource = remember {
+        XYTileSource(
+            "EsriWorldImagery",
+            0,
+            19,
+            256,
+            ".jpg",
+            arrayOf("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/")
+        )
     }
 
     val topoSource = remember {
         XYTileSource(
-            "OpenTopoMap",
+            "EsriWorldTopoMap",
             0,
-            17,
+            19,
             256,
-            ".png",
-            arrayOf("https://tile.opentopomap.org/")
-        )
-    }
-
-    val transportSource = remember {
-        XYTileSource(
-            "OSMTransport",
-            0,
-            18,
-            256,
-            ".png",
-            arrayOf("https://tile.memomaps.de/tilegen/")
+            ".jpg",
+            arrayOf("https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/")
         )
     }
 
@@ -262,17 +261,14 @@ private fun MapScreen(
                 title = { Text("Selecionar mapa base") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { basemap = BasemapOption.ESTRADAS; showLayers = false }) {
-                            Text("Estradas")
+                        TextButton(onClick = { basemap = BasemapOption.ESTRADAS_ESRI; showLayers = false }) {
+                            Text("Estradas (ESRI)")
                         }
-                        TextButton(onClick = { basemap = BasemapOption.SATELITE_MAPBOX; showLayers = false }) {
-                            Text("Satélite (Mapbox)")
+                        TextButton(onClick = { basemap = BasemapOption.SATELITE_ESRI; showLayers = false }) {
+                            Text("Satélite (ESRI)")
                         }
-                        TextButton(onClick = { basemap = BasemapOption.TOPOGRAFIA; showLayers = false }) {
-                            Text("Topografia")
-                        }
-                        TextButton(onClick = { basemap = BasemapOption.TRANSPORTE_PUBLICO; showLayers = false }) {
-                            Text("Transporte público")
+                        TextButton(onClick = { basemap = BasemapOption.TOPOGRAFIA_ESRI; showLayers = false }) {
+                            Text("Topografia (ESRI)")
                         }
                     }
                 },
@@ -305,10 +301,9 @@ private fun MapScreen(
                 mapView.setUseDataConnection(!offlineMode)
 
                 when (basemap) {
-                    BasemapOption.ESTRADAS -> mapView.setTileSource(TileSourceFactory.MAPNIK)
-                    BasemapOption.SATELITE_MAPBOX -> mapView.setTileSource(satelliteSource)
-                    BasemapOption.TOPOGRAFIA -> mapView.setTileSource(topoSource)
-                    BasemapOption.TRANSPORTE_PUBLICO -> mapView.setTileSource(transportSource)
+                    BasemapOption.ESTRADAS_ESRI -> mapView.setTileSource(roadsSource)
+                    BasemapOption.SATELITE_ESRI -> mapView.setTileSource(satelliteSource)
+                    BasemapOption.TOPOGRAFIA_ESRI -> mapView.setTileSource(topoSource)
                 }
 
                 mapView.overlays.removeAll(mapView.overlays.filterIsInstance<Marker>())
@@ -420,7 +415,7 @@ private fun MapScreen(
 }
 
 @Composable
-private fun ReportDetailDialog(report: ReportWithPhotos, onDismiss: () -> Unit) {
+private fun ReportDetailDialog(report: ReportWithPhotos, onDismiss: () -> Unit, onEdit: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("🌱 ${report.report.cultura}") },
@@ -429,6 +424,7 @@ private fun ReportDetailDialog(report: ReportWithPhotos, onDismiss: () -> Unit) 
                 Text("Cultivar: ${report.report.cultivar}")
                 Text("Data/Hora: ${formatDate(report.report.createdAt)}")
                 Text("Lat/Lon: ${report.report.latitude} / ${report.report.longitude}")
+                Text("Altitude: ${report.report.altitude ?: "-"}")
                 HorizontalDivider()
                 Text("Sanidade geral: ${report.report.sanidadeGeral}")
                 Text("Pragas: ${report.report.presencaPragas} • ${report.report.nomesPragas}")
@@ -450,18 +446,21 @@ private fun ReportDetailDialog(report: ReportWithPhotos, onDismiss: () -> Unit) 
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Fechar") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Fechar") } },
+        dismissButton = { TextButton(onClick = onEdit) { Text("Editar relatório") } }
     )
 }
 
 @Composable
-private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
+private fun FormScreen(viewModel: ReportViewModel, initialReport: ReportEntity? = null, onFinish: () -> Unit) {
     val context = LocalContext.current
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
-    val reportId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
-    var form by rememberSaveable { mutableStateOf(ReportFormState()) }
-    var latitude by rememberSaveable { mutableStateOf<Double?>(null) }
-    var longitude by rememberSaveable { mutableStateOf<Double?>(null) }
+    val isEditing = initialReport != null
+    val reportId = initialReport?.id ?: rememberSaveable { UUID.randomUUID().toString() }
+    var form by rememberSaveable(reportId) { mutableStateOf(initialReport?.toFormState() ?: ReportFormState()) }
+    var latitude by rememberSaveable(reportId) { mutableStateOf(initialReport?.latitude) }
+    var longitude by rememberSaveable(reportId) { mutableStateOf(initialReport?.longitude) }
+    var altitude by rememberSaveable(reportId) { mutableStateOf(initialReport?.altitude) }
     var currentPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
     var unsaved by rememberSaveable { mutableStateOf(false) }
     var askLeave by rememberSaveable { mutableStateOf(false) }
@@ -469,17 +468,21 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
 
     fun refreshLocation() {
+        if (isEditing) return
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             fusedLocationClient.lastLocation.addOnSuccessListener {
                 latitude = it?.latitude
                 longitude = it?.longitude
+                altitude = it?.takeIf { loc -> loc.hasAltitude() }?.altitude
             }
         }
     }
 
     val requestPermissionsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { refreshLocation() }
+    ) {
+        if (!isEditing) refreshLocation()
+    }
 
     val takePhotoLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
@@ -494,7 +497,7 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
         if (!path.isNullOrBlank()) {
             val photoFile = File(path)
             if (photoFile.exists()) {
-                viewModel.savePhoto(reportId, path, latitude, longitude)
+                viewModel.savePhoto(reportId, path, latitude, longitude, altitude)
                 unsaved = true
             }
         }
@@ -505,7 +508,7 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
         if (unsaved) askLeave = true else onFinish()
     }
 
-    LaunchedEffect(reportId) {
+    LaunchedEffect(reportId, isEditing) {
         requestPermissionsLauncher.launch(
             arrayOf(
                 Manifest.permission.CAMERA,
@@ -513,14 +516,18 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
                 Manifest.permission.ACCESS_COARSE_LOCATION
             )
         )
-        refreshLocation()
+        if (!isEditing) {
+            refreshLocation()
+        }
         viewModel.loadPhotos(reportId)
     }
 
-    DisposableEffect(lifecycleOwner, reportId) {
+    DisposableEffect(lifecycleOwner, reportId, isEditing) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                refreshLocation()
+                if (!isEditing) {
+                    refreshLocation()
+                }
                 viewModel.loadPhotos(reportId)
                 viewModel.refreshReports()
             }
@@ -543,9 +550,10 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
         modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text("Novo relatório", style = MaterialTheme.typography.titleLarge)
-        Text("Data/Hora: ${formatDate(System.currentTimeMillis())}")
-        Text("Lat/Lon atual: ${latitude ?: "-"} / ${longitude ?: "-"}")
+        Text(if (isEditing) "Editar relatório" else "Novo relatório", style = MaterialTheme.typography.titleLarge)
+        Text("Data/Hora: ${formatDate(initialReport?.createdAt ?: System.currentTimeMillis())}")
+        Text("Lat/Lon: ${latitude ?: "-"} / ${longitude ?: "-"}")
+        Text("Altitude: ${altitude ?: "-"}")
 
         DropdownField("1- Cultura", form.cultura, viewModel.culturaOptions) { form = form.copy(cultura = it); unsaved = true }
         TextField("2- Cultivar", form.cultivar) { form = form.copy(cultivar = it); unsaved = true }
@@ -599,9 +607,10 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
         Button(onClick = {
             val entity = ReportEntity(
                 id = reportId,
-                createdAt = System.currentTimeMillis(),
+                createdAt = initialReport?.createdAt ?: System.currentTimeMillis(),
                 latitude = latitude,
                 longitude = longitude,
+                altitude = altitude,
                 cultura = form.cultura,
                 cultivar = form.cultivar,
                 faseFenologica = form.faseFenologica,
@@ -630,7 +639,7 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
             unsaved = false
             onFinish()
         }) {
-            Text("Salvar relatório e voltar ao mapa")
+            Text(if (isEditing) "Salvar alterações e voltar ao mapa" else "Salvar relatório e voltar ao mapa")
         }
     }
 }
@@ -732,6 +741,32 @@ private fun createImageFile(context: Context): File {
     val picturesDir = File(context.filesDir, "Pictures/GeoReport").apply { mkdirs() }
     return File(picturesDir, fileName)
 }
+
+private fun ReportEntity.toFormState(): ReportFormState = ReportFormState(
+    cultura = cultura,
+    cultivar = cultivar,
+    faseFenologica = faseFenologica,
+    espacamentoLinha = espacamentoLinha?.toString().orEmpty(),
+    espacamentoEntreLinha = espacamentoEntreLinha?.toString().orEmpty(),
+    altura = altura?.toString().orEmpty(),
+    comprimentoPivoRaiz = comprimentoPivoRaiz?.toString().orEmpty(),
+    distribuicaoSistemaRadicular = distribuicaoSistemaRadicular,
+    sanidadeGeral = sanidadeGeral,
+    presencaPragas = presencaPragas,
+    nomesPragas = nomesPragas,
+    intensidadeDanosPragas = intensidadeDanosPragas,
+    presencaDoencas = presencaDoencas,
+    nomesDoencas = nomesDoencas,
+    intensidadeDanosDoencas = intensidadeDanosDoencas,
+    presencaDaninhas = presencaDaninhas,
+    nomesDaninhas = nomesDaninhas,
+    intensidadeInfestacao = intensidadeInfestacao,
+    coberturaPalha = coberturaPalha,
+    intensidadeErosao = intensidadeErosao,
+    corSolo = corSolo,
+    texturaSolo = texturaSolo,
+    compactacao = compactacao
+)
 
 
 

@@ -85,9 +85,9 @@ class ReportViewModel(
         }
     }
 
-    fun savePhoto(reportId: String, filePath: String, latitude: Double?, longitude: Double?) {
+    fun savePhoto(reportId: String, filePath: String, latitude: Double?, longitude: Double?, altitude: Double?) {
         viewModelScope.launch {
-            repository.savePhoto(reportId, filePath, latitude, longitude)
+            repository.savePhoto(reportId, filePath, latitude, longitude, altitude)
             _photos.value = repository.photosByReport(reportId)
             refreshReports()
         }
