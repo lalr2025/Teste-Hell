@@ -138,7 +138,7 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
                 viewModel.exportZip(file) { result ->
                     exportingZip = false
                     result.onSuccess {
-                        val uri = FileProvider.getUriForFile(context, "${BuildConfig.APPLICATION_ID}.fileprovider", file)
+                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
                         val intent = Intent(Intent.ACTION_SEND).apply {
                             type = "application/zip"
                             putExtra(Intent.EXTRA_STREAM, uri)
@@ -588,7 +588,7 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
             currentPhotoPath = photoFile.absolutePath
             val outputUri = FileProvider.getUriForFile(
                 context,
-                "${BuildConfig.APPLICATION_ID}.fileprovider",
+                "${context.packageName}.fileprovider",
                 photoFile
             )
             takePhotoLauncher.launch(outputUri)
