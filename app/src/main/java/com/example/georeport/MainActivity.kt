@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
@@ -38,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -94,7 +97,7 @@ private enum class BasemapOption {
 private fun GeoReportApp(viewModel: ReportViewModel) {
     val context = LocalContext.current
     val reports by viewModel.reports.collectAsState()
-    var screen by remember { mutableStateOf(Screen.MAP) }
+    var screen by rememberSaveable { mutableStateOf(Screen.MAP) }
     var selectedReport by remember { mutableStateOf<ReportWithPhotos?>(null) }
 
     LaunchedEffect(Unit) { viewModel.refreshReports() }
@@ -178,7 +181,7 @@ private fun MapScreen(
             Button(onClick = onNewReport) { Text("Novo relatório") }
             Button(onClick = onRefreshMap) { Text("Atualizar mapa") }
             Button(onClick = onExportCsv) { Text("Baixar CSV") }
-            Button(onClick = { showLayers = true }) { Text("Layers") }
+            Button(onClick = { showLayers = true }) { Text("🗺 Camadas") }
         }
 
         if (showLayers) {
@@ -204,16 +207,24 @@ private fun MapScreen(
             )
         }
 
-        AndroidView(
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            factory = { ctx ->
-                MapView(ctx).apply {
-                    setMultiTouchControls(true)
-                    controller.setZoom(4.5)
-                    controller.setCenter(GeoPoint(-14.235, -51.925))
-                }
-            },
-            update = { mapView ->
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        ) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    MapView(ctx).apply {
+                        setMultiTouchControls(true)
+                        controller.setZoom(4.5)
+                        controller.setCenter(GeoPoint(-14.235, -51.925))
+                    }
+                },
+                update = { mapView ->
                 Configuration.getInstance().userAgentValue = context.packageName
 
                 when (basemap) {
@@ -236,9 +247,19 @@ private fun MapScreen(
                     if (lat != null && lon != null) MarkerItem(rw, lat, lon) else null
                 }
 
+                val zoom = mapView.zoomLevelDouble
+                val precisionFactor = when {
+                    zoom >= 17 -> 1_000_000
+                    zoom >= 15 -> 100_000
+                    zoom >= 13 -> 30_000
+                    zoom >= 11 -> 10_000
+                    zoom >= 9 -> 5_000
+                    else -> 2_000
+                }
+
                 val clusters = points.groupBy {
-                    val latBucket = (it.lat * 10000).roundToInt()
-                    val lonBucket = (it.lon * 10000).roundToInt()
+                    val latBucket = (it.lat * precisionFactor).roundToInt()
+                    val lonBucket = (it.lon * precisionFactor).roundToInt()
                     "$latBucket:$lonBucket"
                 }
 
@@ -311,8 +332,12 @@ private fun MapScreen(
                 }
 
                 mapView.invalidate()
+                if (expandedClusterKey != null && !clusters.containsKey(expandedClusterKey)) {
+                    expandedClusterKey = null
+                }
             }
         )
+        }
     }
 }
 
@@ -504,8 +529,7 @@ private fun DropdownField(label: String, value: String, options: List<String>, o
         onValueChange = {},
         readOnly = true,
         modifier = Modifier.fillMaxWidth(),
-        label = { Text(label) },
-        trailingIcon = { Text("▼") }
+        label = { Text(label) }
     )
 
     Button(onClick = { showDialog = true }) {
@@ -552,7 +576,7 @@ private fun NumberField(label: String, value: String, onChange: (String) -> Unit
 }
 
 
-private fun reportFormStateSaver(): Saver<ReportFormState, Any> = listSaver(
+private fun reportFormStateSaver(): Saver<ReportFormState, List<String>> = listSaver(
     save = {
         listOf(
             it.cultura,
