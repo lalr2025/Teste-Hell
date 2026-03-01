@@ -30,6 +30,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -41,6 +42,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -105,6 +109,17 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
     var selectedReport by remember { mutableStateOf<ReportWithPhotos?>(null) }
 
     LaunchedEffect(Unit) { viewModel.refreshReports() }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshReports()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     if (screen == Screen.MAP) {
         MapScreen(
@@ -430,6 +445,7 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
     var unsaved by rememberSaveable { mutableStateOf(false) }
     var askLeave by rememberSaveable { mutableStateOf(false) }
     val photos by viewModel.photos.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     fun refreshLocation() {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
@@ -470,6 +486,18 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
         )
         refreshLocation()
         viewModel.loadPhotos(reportId)
+    }
+
+    DisposableEffect(lifecycleOwner, reportId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshLocation()
+                viewModel.loadPhotos(reportId)
+                viewModel.refreshReports()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     if (askLeave) {
@@ -627,7 +655,7 @@ private fun NumberField(label: String, value: String, onChange: (String) -> Unit
 }
 
 
-private fun reportFormStateSaver(): Saver<ReportFormState, List<String>> = listSaver(
+private fun reportFormStateSaver(): Saver<ReportFormState, List<String>> = listSaver<ReportFormState, String>(
     save = {
         listOf(
             it.cultura,
