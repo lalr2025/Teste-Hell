@@ -685,7 +685,7 @@ private fun loadPhotoBitmap(photo: com.example.georeport.data.GeoPhotoEntity): a
 
 private fun createImageFile(baseDir: File): File {
     val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-    val fileName = "IMG_${formatter.format(Date())}.png"
+    val fileName = "IMG_${formatter.format(Date())}.jpg"
     val picturesDir = File(baseDir, "Pictures").apply { mkdirs() }
     return File(picturesDir, fileName)
 }
