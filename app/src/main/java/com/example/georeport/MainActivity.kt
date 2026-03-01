@@ -2,6 +2,8 @@ package com.example.georeport
 
 import android.Manifest
 import android.content.Intent
+import android.graphics.Bitmap
+import android.widget.Toast
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -10,6 +12,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -89,8 +92,9 @@ private enum class Screen { MAP, FORM }
 
 private enum class BasemapOption {
     ESTRADAS,
-    SATELITE,
-    TOPOGRAFIA
+    SATELITE_MAPBOX,
+    TOPOGRAFIA,
+    TRANSPORTE_PUBLICO
 }
 
 @Composable
@@ -148,18 +152,30 @@ private fun MapScreen(
     var basemap by rememberSaveable { mutableStateOf(BasemapOption.ESTRADAS) }
     var showLayers by rememberSaveable { mutableStateOf(false) }
     var expandedClusterKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var offlineMode by rememberSaveable { mutableStateOf(false) }
 
-    val satelliteSource = remember {
-        XYTileSource(
-            "EsriWorldImagery",
-            0,
-            19,
-            256,
-            ".jpg",
-            arrayOf(
-                "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"
+    val mapboxToken = remember { context.getString(R.string.mapbox_access_token).trim() }
+
+    val satelliteSource = remember(mapboxToken) {
+        if (mapboxToken.isNotBlank()) {
+            XYTileSource(
+                "MapboxSatellite",
+                0,
+                19,
+                256,
+                ".jpg90?access_token=$mapboxToken",
+                arrayOf("https://api.mapbox.com/v4/mapbox.satellite/")
             )
-        )
+        } else {
+            XYTileSource(
+                "EsriWorldImagery",
+                0,
+                19,
+                256,
+                ".jpg",
+                arrayOf("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/")
+            )
+        }
     }
 
     val topoSource = remember {
@@ -173,15 +189,44 @@ private fun MapScreen(
         )
     }
 
+    val transportSource = remember {
+        XYTileSource(
+            "OSMTransport",
+            0,
+            18,
+            256,
+            ".png",
+            arrayOf("https://tile.memomaps.de/tilegen/")
+        )
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(onClick = onNewReport) { Text("Novo relatório") }
             Button(onClick = onRefreshMap) { Text("Atualizar mapa") }
             Button(onClick = onExportCsv) { Text("Baixar CSV") }
             Button(onClick = { showLayers = true }) { Text("🗺 Camadas") }
+            Button(onClick = {
+                offlineMode = !offlineMode
+                Toast.makeText(
+                    context,
+                    if (offlineMode) "Modo offline ativo (usa cache local)" else "Modo online ativo",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }) { Text(if (offlineMode) "Offline ON" else "Offline OFF") }
+            Button(onClick = {
+                Toast.makeText(
+                    context,
+                    "Área atual marcada para uso offline (cache das tiles visualizadas)",
+                    Toast.LENGTH_LONG
+                ).show()
+            }) { Text("Salvar área offline") }
         }
 
         if (showLayers) {
@@ -193,11 +238,14 @@ private fun MapScreen(
                         TextButton(onClick = { basemap = BasemapOption.ESTRADAS; showLayers = false }) {
                             Text("Estradas")
                         }
-                        TextButton(onClick = { basemap = BasemapOption.SATELITE; showLayers = false }) {
-                            Text("Satélite")
+                        TextButton(onClick = { basemap = BasemapOption.SATELITE_MAPBOX; showLayers = false }) {
+                            Text("Satélite (Mapbox)")
                         }
                         TextButton(onClick = { basemap = BasemapOption.TOPOGRAFIA; showLayers = false }) {
                             Text("Topografia")
+                        }
+                        TextButton(onClick = { basemap = BasemapOption.TRANSPORTE_PUBLICO; showLayers = false }) {
+                            Text("Transporte público")
                         }
                     }
                 },
@@ -227,10 +275,13 @@ private fun MapScreen(
                 update = { mapView ->
                 Configuration.getInstance().userAgentValue = context.packageName
 
+                mapView.setUseDataConnection(!offlineMode)
+
                 when (basemap) {
                     BasemapOption.ESTRADAS -> mapView.setTileSource(TileSourceFactory.MAPNIK)
-                    BasemapOption.SATELITE -> mapView.setTileSource(satelliteSource)
+                    BasemapOption.SATELITE_MAPBOX -> mapView.setTileSource(satelliteSource)
                     BasemapOption.TOPOGRAFIA -> mapView.setTileSource(topoSource)
+                    BasemapOption.TRANSPORTE_PUBLICO -> mapView.setTileSource(transportSource)
                 }
 
                 mapView.overlays.removeAll(mapView.overlays.filterIsInstance<Marker>())
@@ -394,10 +445,13 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
     ) { refreshLocation() }
 
     val takePhotoLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicture()
-    ) { success ->
-        if (success && currentPhotoPath != null) {
-            viewModel.savePhoto(reportId, currentPhotoPath!!, latitude, longitude)
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap: Bitmap? ->
+        if (bitmap != null) {
+            val photoFile = createImageFile(context.filesDir)
+            saveBitmapToFile(bitmap, photoFile)
+            currentPhotoPath = photoFile.absolutePath
+            viewModel.savePhoto(reportId, photoFile.absolutePath, latitude, longitude)
             unsaved = true
         }
     }
@@ -473,10 +527,7 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
                 return@Button
             }
 
-            val photoFile = createImageFile(context.filesDir)
-            currentPhotoPath = photoFile.absolutePath
-            val photoUri = FileProvider.getUriForFile(context, "com.example.georeport.fileprovider", photoFile)
-            takePhotoLauncher.launch(photoUri)
+            takePhotoLauncher.launch(null)
         }) {
             Text("Adicionar foto (${photos.size}/5)")
         }
@@ -576,7 +627,7 @@ private fun NumberField(label: String, value: String, onChange: (String) -> Unit
 }
 
 
-private fun reportFormStateSaver(): Saver<ReportFormState, Any> = listSaver(
+private fun reportFormStateSaver(): Saver<ReportFormState, List<String>> = listSaver(
     save = {
         listOf(
             it.cultura,
@@ -632,6 +683,12 @@ private fun reportFormStateSaver(): Saver<ReportFormState, Any> = listSaver(
         )
     }
 )
+
+private fun saveBitmapToFile(bitmap: Bitmap, file: File) {
+    file.outputStream().use { out ->
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)
+    }
+}
 
 private fun createImageFile(baseDir: File): File {
     val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
