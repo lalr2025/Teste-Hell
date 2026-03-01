@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.georeport.data.AppDatabase
 import com.example.georeport.data.ReportEntity
@@ -129,17 +130,16 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
             onNewReport = { screen = Screen.FORM },
             onMarkerClick = { selectedReport = it },
             onRefreshMap = { viewModel.refreshReports() },
-            onExportCsv = {
-                val csv = viewModel.csvContent()
-                val file = File(context.cacheDir, "relatorios_georeferenciados.csv")
-                file.writeText(csv)
+            onExportZip = {
+                val file = File(context.cacheDir, "relatorios_georeferenciados.zip")
+                viewModel.exportZip(file)
                 val uri = FileProvider.getUriForFile(context, "com.example.georeport.fileprovider", file)
                 val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/csv"
+                    type = "application/zip"
                     putExtra(Intent.EXTRA_STREAM, uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                context.startActivity(Intent.createChooser(intent, "Exportar CSV"))
+                context.startActivity(Intent.createChooser(intent, "Exportar ZIP"))
             }
         )
 
@@ -163,7 +163,7 @@ private fun MapScreen(
     onNewReport: () -> Unit,
     onMarkerClick: (ReportWithPhotos) -> Unit,
     onRefreshMap: () -> Unit,
-    onExportCsv: () -> Unit
+    onExportZip: () -> Unit
 ) {
     val context = LocalContext.current
     var basemap by rememberSaveable { mutableStateOf(BasemapOption.ESTRADAS) }
@@ -227,7 +227,7 @@ private fun MapScreen(
         ) {
             Button(onClick = onNewReport) { Text("Novo relatório") }
             Button(onClick = onRefreshMap) { Text("Atualizar mapa") }
-            Button(onClick = onExportCsv) { Text("Baixar CSV") }
+            Button(onClick = onExportZip) { Text("Baixar ZIP") }
             Button(onClick = { showLayers = true }) { Text("🗺 Camadas") }
             Button(onClick = {
                 offlineMode = !offlineMode
@@ -475,6 +475,7 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
         contract = ActivityResultContracts.TakePicture()
     ) { success: Boolean ->
         if (success && !currentPhotoPath.isNullOrBlank()) {
+            writeExifGps(currentPhotoPath!!, latitude, longitude)
             viewModel.savePhoto(reportId, currentPhotoPath!!, latitude, longitude)
             unsaved = true
         }
@@ -688,6 +689,19 @@ private fun createImageFile(baseDir: File): File {
     val fileName = "IMG_${formatter.format(Date())}.jpg"
     val picturesDir = File(baseDir, "Pictures").apply { mkdirs() }
     return File(picturesDir, fileName)
+}
+
+
+private fun writeExifGps(filePath: String, latitude: Double?, longitude: Double?) {
+    if (latitude == null || longitude == null) return
+    runCatching {
+        val exif = ExifInterface(filePath)
+        exif.setGpsInfo(android.location.Location("georeport").apply {
+            this.latitude = latitude
+            this.longitude = longitude
+        })
+        exif.saveAttributes()
+    }
 }
 
 private fun formatDate(ts: Long): String =

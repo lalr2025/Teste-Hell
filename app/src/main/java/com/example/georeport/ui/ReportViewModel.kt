@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.File
 
 data class DropOption(val label: String)
 
@@ -90,6 +91,10 @@ class ReportViewModel(
             _photos.value = repository.photosByReport(reportId)
             refreshReports()
         }
+    }
+
+    fun exportZip(file: File) {
+        repository.exportReportsZip(file, reports.value)
     }
 
     fun csvContent(): String {
