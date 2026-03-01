@@ -12,6 +12,8 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class GeoReportRepository(
     private val dao: AppDao
@@ -26,7 +28,7 @@ class GeoReportRepository(
         latitude: Double?,
         longitude: Double?
     ) {
-        val base64Data = filePathToBase64(filePath)
+        val base64Data = ""
         dao.insertPhoto(
             GeoPhotoEntity(
                 id = UUID.randomUUID().toString(),
@@ -102,7 +104,8 @@ class GeoReportRepository(
 
 
 
-    fun exportReportsZip(outputZipFile: File, reports: List<ReportWithPhotos>) {
+    suspend fun exportReportsZip(outputZipFile: File) = withContext(Dispatchers.IO) {
+        val reports = listReports()
         outputZipFile.parentFile?.mkdirs()
         ZipOutputStream(outputZipFile.outputStream().buffered()).use { zip ->
             val reportsJson = JSONArray()

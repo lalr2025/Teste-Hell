@@ -93,8 +93,11 @@ class ReportViewModel(
         }
     }
 
-    fun exportZip(file: File) {
-        repository.exportReportsZip(file, reports.value)
+    fun exportZip(file: File, onDone: (Result<Unit>) -> Unit) {
+        viewModelScope.launch {
+            val result = runCatching { repository.exportReportsZip(file) }
+            onDone(result)
+        }
     }
 
     fun csvContent(): String {

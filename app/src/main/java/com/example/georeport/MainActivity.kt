@@ -110,6 +110,7 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
     val reports by viewModel.reports.collectAsState()
     var screen by rememberSaveable { mutableStateOf(Screen.MAP) }
     var selectedReport by remember { mutableStateOf<ReportWithPhotos?>(null) }
+    var exportingZip by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.refreshReports() }
 
@@ -131,15 +132,23 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
             onMarkerClick = { selectedReport = it },
             onRefreshMap = { viewModel.refreshReports() },
             onExportZip = {
+                if (exportingZip) return@MapScreen
+                exportingZip = true
                 val file = File(context.cacheDir, "relatorios_georeferenciados.zip")
-                viewModel.exportZip(file)
-                val uri = FileProvider.getUriForFile(context, "com.example.georeport.fileprovider", file)
-                val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = "application/zip"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                viewModel.exportZip(file) { result ->
+                    exportingZip = false
+                    result.onSuccess {
+                        val uri = FileProvider.getUriForFile(context, "com.example.georeport.fileprovider", file)
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "application/zip"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(intent, "Exportar ZIP"))
+                    }.onFailure {
+                        Toast.makeText(context, "Falha ao exportar ZIP: ${it.message}", Toast.LENGTH_LONG).show()
+                    }
                 }
-                context.startActivity(Intent.createChooser(intent, "Exportar ZIP"))
             }
         )
 
@@ -674,7 +683,7 @@ private fun loadPhotoBitmap(photo: com.example.georeport.data.GeoPhotoEntity): a
     return runCatching {
         val file = File(photo.filePath)
         when {
-            file.exists() -> BitmapFactory.decodeFile(file.absolutePath)
+            file.exists() -> decodeSampledBitmap(file.absolutePath, 1280, 1280)
             photo.base64Data.isNotBlank() -> {
                 val raw = android.util.Base64.decode(photo.base64Data, android.util.Base64.DEFAULT)
                 BitmapFactory.decodeByteArray(raw, 0, raw.size)
@@ -682,6 +691,28 @@ private fun loadPhotoBitmap(photo: com.example.georeport.data.GeoPhotoEntity): a
             else -> null
         }
     }.getOrNull()
+}
+
+private fun decodeSampledBitmap(path: String, reqWidth: Int, reqHeight: Int): android.graphics.Bitmap? {
+    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, options)
+
+    options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
+    options.inJustDecodeBounds = false
+    return BitmapFactory.decodeFile(path, options)
+}
+
+private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+    val (height: Int, width: Int) = options.run { outHeight to outWidth }
+    var inSampleSize = 1
+    if (height > reqHeight || width > reqWidth) {
+        var halfHeight = height / 2
+        var halfWidth = width / 2
+        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+            inSampleSize *= 2
+        }
+    }
+    return inSampleSize.coerceAtLeast(1)
 }
 
 private fun createImageFile(baseDir: File): File {
