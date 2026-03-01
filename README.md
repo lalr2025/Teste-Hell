@@ -50,6 +50,17 @@ adb install -r app-debug.apk
 
 Eu não consigo instalar diretamente no seu aparelho daqui porque não tenho acesso físico ao seu Moto G56/USB. O que eu consigo fazer é deixar o processo pronto para você gerar online e baixar o APK.
 
+
+## Melhorias implementadas nesta versão
+
+- Tela inicial com mapa (Google Maps) e pins dos relatórios salvos.
+- Formulário completo com os 22+ campos solicitados (drop lists e campos abertos).
+- Limite de até 5 fotos por relatório.
+- Aviso ao voltar sem salvar.
+- Salva data/hora no relatório.
+- Ao salvar, o pin aparece no mapa (refresh da lista local).
+- Exportação de consolidado CSV (com data/hora, latitude/longitude e fotos em Base64).
+
 ## Próximos ajustes sugeridos
 
 1. Trocar os campos de texto das respostas por dropdown real (`ExposedDropdownMenuBox`).

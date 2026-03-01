@@ -3,4 +3,7 @@
     <files-path
         name="report_images"
         path="Pictures/" />
+    <cache-path
+        name="csv_exports"
+        path="." />
 </paths>

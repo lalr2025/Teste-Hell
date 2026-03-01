@@ -4,21 +4,40 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.georeport.data.GeoPhotoEntity
+import com.example.georeport.data.ReportEntity
+import com.example.georeport.data.ReportWithPhotos
 import com.example.georeport.domain.GeoReportRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-data class QuestionUi(
-    val id: String,
-    val title: String,
-    val options: List<OptionUi>
-)
+data class DropOption(val label: String)
 
-data class OptionUi(
-    val id: String,
-    val label: String
+data class ReportFormState(
+    val cultura: String = "",
+    val cultivar: String = "",
+    val faseFenologica: String = "",
+    val espacamentoLinha: String = "",
+    val espacamentoEntreLinha: String = "",
+    val altura: String = "",
+    val comprimentoPivoRaiz: String = "",
+    val distribuicaoSistemaRadicular: String = "",
+    val sanidadeGeral: String = "",
+    val presencaPragas: String = "",
+    val nomesPragas: String = "",
+    val intensidadeDanosPragas: String = "",
+    val presencaDoencas: String = "",
+    val nomesDoencas: String = "",
+    val intensidadeDanosDoencas: String = "",
+    val presencaDaninhas: String = "",
+    val nomesDaninhas: String = "",
+    val intensidadeInfestacao: String = "",
+    val coberturaPalha: String = "",
+    val intensidadeErosao: String = "",
+    val corSolo: String = "",
+    val texturaSolo: String = "",
+    val compactacao: String = ""
 )
 
 class ReportViewModel(
@@ -28,26 +47,20 @@ class ReportViewModel(
     private val _photos = MutableStateFlow<List<GeoPhotoEntity>>(emptyList())
     val photos: StateFlow<List<GeoPhotoEntity>> = _photos.asStateFlow()
 
-    val questions = listOf(
-        QuestionUi(
-            id = "q1",
-            title = "Condição do local",
-            options = listOf(
-                OptionUi("q1_o1", "Bom"),
-                OptionUi("q1_o2", "Regular"),
-                OptionUi("q1_o3", "Ruim")
-            )
-        ),
-        QuestionUi(
-            id = "q2",
-            title = "Acesso",
-            options = listOf(
-                OptionUi("q2_o1", "Livre"),
-                OptionUi("q2_o2", "Parcial"),
-                OptionUi("q2_o3", "Bloqueado")
-            )
-        )
+    private val _reports = MutableStateFlow<List<ReportWithPhotos>>(emptyList())
+    val reports: StateFlow<List<ReportWithPhotos>> = _reports.asStateFlow()
+
+    val culturaOptions = listOf(
+        "Abacate", "Aveia", "Café", "Cana", "Laranja", "Limão", "Milho", "Sorgo", "Soja", "Trigo", "Amendoim", "Cobertura Verde"
     )
+
+    val qualidadeOptions = listOf("Bom", "Regular", "Ruim")
+    val simNaoOptions = listOf("Sim", "Não")
+    val intensidadeOptions = listOf("Alta", "Moderada", "Baixa")
+    val coberturaOptions = listOf("Boa", "Média", "Ruim")
+    val erosaoOptions = listOf("Alta", "Média", "Baixa")
+    val texturaOptions = listOf("Arenoso", "Textura Média", "Argiloso")
+    val compactacaoOptions = listOf("Alta", "Moderada", "Baixa", "Nenhuma")
 
     fun loadPhotos(reportId: String) {
         viewModelScope.launch {
@@ -55,14 +68,16 @@ class ReportViewModel(
         }
     }
 
-    fun saveReport(
-        reportId: String,
-        latitude: Double?,
-        longitude: Double?,
-        answers: Map<String, String>
-    ) {
+    fun refreshReports() {
         viewModelScope.launch {
-            repository.saveReport(reportId, latitude, longitude, answers)
+            _reports.value = repository.listReports()
+        }
+    }
+
+    fun saveReport(report: ReportEntity) {
+        viewModelScope.launch {
+            repository.saveReport(report)
+            refreshReports()
         }
     }
 
@@ -70,7 +85,21 @@ class ReportViewModel(
         viewModelScope.launch {
             repository.savePhoto(reportId, filePath, latitude, longitude)
             _photos.value = repository.photosByReport(reportId)
+            refreshReports()
         }
+    }
+
+    fun csvContent(): String {
+        val header = listOf(
+            "id", "createdAt", "latitude", "longitude", "cultura", "cultivar", "faseFenologica",
+            "espacamentoLinha", "espacamentoEntreLinha", "altura", "comprimentoPivoRaiz",
+            "distribuicaoSistemaRadicular", "sanidadeGeral", "presencaPragas", "nomesPragas", "intensidadeDanosPragas",
+            "presencaDoencas", "nomesDoencas", "intensidadeDanosDoencas", "presencaDaninhas", "nomesDaninhas",
+            "intensidadeInfestacao", "coberturaPalha", "intensidadeErosao", "corSolo", "texturaSolo", "compactacao", "photosBase64"
+        ).joinToString(",") { "\"$it\"" }
+
+        val body = reports.value.joinToString("\n") { repository.reportToCsvLine(it) }
+        return "$header\n$body"
     }
 }
 
