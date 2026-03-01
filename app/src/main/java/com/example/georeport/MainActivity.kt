@@ -238,7 +238,7 @@ private fun MapScreen(
             Button(onClick = onNewReport) { Text("Novo relatório") }
             Button(onClick = onRefreshMap) { Text("Atualizar mapa") }
             Button(onClick = onExportZip) { Text("Baixar ZIP") }
-            Text("v${BuildConfig.VERSION_NAME}")
+            Text("v${appVersionName(context)}")
             Button(onClick = { showLayers = true }) { Text("🗺 Camadas") }
             Button(onClick = {
                 offlineMode = !offlineMode
@@ -736,6 +736,10 @@ private fun createImageFile(context: Context): File {
 }
 
 
+
+private fun appVersionName(context: Context): String = runCatching {
+    context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "-"
+}.getOrDefault("-")
 
 private fun formatDate(ts: Long): String =
     SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()).format(Date(ts))
