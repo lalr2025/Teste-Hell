@@ -423,7 +423,7 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
     val context = LocalContext.current
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     val reportId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
-    var form by rememberSaveable(saver = reportFormStateSaver()) { ReportFormState() }
+    var form by rememberSaveable(stateSaver = reportFormStateSaver()) { mutableStateOf(ReportFormState()) }
     var latitude by rememberSaveable { mutableStateOf<Double?>(null) }
     var longitude by rememberSaveable { mutableStateOf<Double?>(null) }
     var currentPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
