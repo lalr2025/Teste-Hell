@@ -9,7 +9,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,11 +22,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenu
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
@@ -342,21 +342,31 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
 @Composable
 private fun DropdownField(label: String, value: String, options: List<String>, onChange: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
+
+    Box(modifier = Modifier.fillMaxWidth()) {
         OutlinedTextField(
-            modifier = Modifier.menuAnchor().fillMaxWidth(),
             value = value,
             onValueChange = {},
             readOnly = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = true },
             label = { Text(label) },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) }
+            trailingIcon = { Text(if (expanded) "▲" else "▼") }
         )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
             options.forEach { option ->
-                DropdownMenuItem(text = { Text(option) }, onClick = {
-                    onChange(option)
-                    expanded = false
-                })
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = {
+                        onChange(option)
+                        expanded = false
+                    }
+                )
             }
         }
     }
