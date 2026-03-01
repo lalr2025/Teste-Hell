@@ -3,10 +3,12 @@ package com.example.georeport.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import android.os.Parcelable
 import com.example.georeport.data.GeoPhotoEntity
 import com.example.georeport.data.ReportEntity
 import com.example.georeport.data.ReportWithPhotos
 import com.example.georeport.domain.GeoReportRepository
+import kotlinx.parcelize.Parcelize
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,6 +16,7 @@ import kotlinx.coroutines.launch
 
 data class DropOption(val label: String)
 
+@Parcelize
 data class ReportFormState(
     val cultura: String = "",
     val cultivar: String = "",
@@ -38,7 +41,7 @@ data class ReportFormState(
     val corSolo: String = "",
     val texturaSolo: String = "",
     val compactacao: String = ""
-)
+) : Parcelable
 
 class ReportViewModel(
     private val repository: GeoReportRepository

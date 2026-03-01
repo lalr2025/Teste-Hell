@@ -36,8 +36,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.Saver
-import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -438,7 +436,7 @@ private fun FormScreen(viewModel: ReportViewModel, onFinish: () -> Unit) {
     val context = LocalContext.current
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     val reportId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
-    var form by rememberSaveable(stateSaver = reportFormStateSaver()) { mutableStateOf(ReportFormState()) }
+    var form by rememberSaveable { mutableStateOf(ReportFormState()) }
     var latitude by rememberSaveable { mutableStateOf<Double?>(null) }
     var longitude by rememberSaveable { mutableStateOf<Double?>(null) }
     var currentPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
@@ -654,63 +652,6 @@ private fun NumberField(label: String, value: String, onChange: (String) -> Unit
     OutlinedTextField(value = value, onValueChange = onChange, modifier = Modifier.fillMaxWidth(), label = { Text(label) })
 }
 
-
-private fun reportFormStateSaver(): Saver<ReportFormState, List<String>> = listSaver(
-    save = { formState: ReportFormState ->
-        listOf(
-            formState.cultura,
-            formState.cultivar,
-            formState.faseFenologica,
-            formState.espacamentoLinha,
-            formState.espacamentoEntreLinha,
-            formState.altura,
-            formState.comprimentoPivoRaiz,
-            formState.distribuicaoSistemaRadicular,
-            formState.sanidadeGeral,
-            formState.presencaPragas,
-            formState.nomesPragas,
-            formState.intensidadeDanosPragas,
-            formState.presencaDoencas,
-            formState.nomesDoencas,
-            formState.intensidadeDanosDoencas,
-            formState.presencaDaninhas,
-            formState.nomesDaninhas,
-            formState.intensidadeInfestacao,
-            formState.coberturaPalha,
-            formState.intensidadeErosao,
-            formState.corSolo,
-            formState.texturaSolo,
-            formState.compactacao
-        )
-    },
-    restore = { values: List<String> ->
-        ReportFormState(
-            cultura = values[0],
-            cultivar = values[1],
-            faseFenologica = values[2],
-            espacamentoLinha = values[3],
-            espacamentoEntreLinha = values[4],
-            altura = values[5],
-            comprimentoPivoRaiz = values[6],
-            distribuicaoSistemaRadicular = values[7],
-            sanidadeGeral = values[8],
-            presencaPragas = values[9],
-            nomesPragas = values[10],
-            intensidadeDanosPragas = values[11],
-            presencaDoencas = values[12],
-            nomesDoencas = values[13],
-            intensidadeDanosDoencas = values[14],
-            presencaDaninhas = values[15],
-            nomesDaninhas = values[16],
-            intensidadeInfestacao = values[17],
-            coberturaPalha = values[18],
-            intensidadeErosao = values[19],
-            corSolo = values[20],
-            texturaSolo = values[21],
-            compactacao = values[22]
-        )
-    }
-)
 
 private fun saveBitmapToFile(bitmap: Bitmap, file: File) {
     file.outputStream().use { out ->
