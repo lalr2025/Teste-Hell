@@ -39,12 +39,18 @@ class GeoReportRepository(
 
     fun reportToCsvLine(reportWithPhotos: ReportWithPhotos): String {
         val r = reportWithPhotos.report
-        val photoBase64 = reportWithPhotos.photos.joinToString("|") { photo ->
-            runCatching {
-                val bytes = File(photo.filePath).readBytes()
-                Base64.encodeToString(bytes, Base64.NO_WRAP)
-            }.getOrDefault("")
-        }
+        val photoColumns = reportWithPhotos.photos
+            .take(5)
+            .map { photo ->
+                runCatching {
+                    val bytes = File(photo.filePath).readBytes()
+                    Base64.encodeToString(bytes, Base64.NO_WRAP)
+                }.getOrDefault("")
+            }
+            .toMutableList()
+            .apply {
+                while (size < 5) add("")
+            }
 
         val fields = listOf(
             r.id,
@@ -73,9 +79,8 @@ class GeoReportRepository(
             r.intensidadeErosao,
             r.corSolo,
             r.texturaSolo,
-            r.compactacao,
-            photoBase64
-        )
+            r.compactacao
+        ) + photoColumns
 
         return fields.joinToString(",") { value ->
             val sanitized = value.replace("\"", "\"\"")

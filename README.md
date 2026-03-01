@@ -59,7 +59,7 @@ Eu não consigo instalar diretamente no seu aparelho daqui porque não tenho ace
 - Aviso ao voltar sem salvar.
 - Salva data/hora no relatório.
 - Ao salvar, o pin aparece no mapa (refresh da lista local).
-- Exportação de consolidado CSV (com data/hora, latitude/longitude e fotos em Base64).
+- Exportação de consolidado CSV (com data/hora, latitude/longitude e fotos em colunas Base64 separadas: `photo1Base64` a `photo5Base64`).
 
 ## Próximos ajustes sugeridos
 

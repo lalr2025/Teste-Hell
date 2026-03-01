@@ -95,7 +95,8 @@ class ReportViewModel(
             "espacamentoLinha", "espacamentoEntreLinha", "altura", "comprimentoPivoRaiz",
             "distribuicaoSistemaRadicular", "sanidadeGeral", "presencaPragas", "nomesPragas", "intensidadeDanosPragas",
             "presencaDoencas", "nomesDoencas", "intensidadeDanosDoencas", "presencaDaninhas", "nomesDaninhas",
-            "intensidadeInfestacao", "coberturaPalha", "intensidadeErosao", "corSolo", "texturaSolo", "compactacao", "photosBase64"
+            "intensidadeInfestacao", "coberturaPalha", "intensidadeErosao", "corSolo", "texturaSolo", "compactacao",
+            "photo1Base64", "photo2Base64", "photo3Base64", "photo4Base64", "photo5Base64"
         ).joinToString(",") { "\"$it\"" }
 
         val body = reports.value.joinToString("\n") { repository.reportToCsvLine(it) }
