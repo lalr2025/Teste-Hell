@@ -1,5 +1,5 @@
 # GeoReport Android (MVP)
-
+#
 Base inicial de um aplicativo Android para **relatório georreferenciado** com:
 - perguntas com respostas selecionáveis,
 - captura de coordenadas GPS,
