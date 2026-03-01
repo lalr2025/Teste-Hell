@@ -96,7 +96,11 @@ class ReportViewModel(
             "distribuicaoSistemaRadicular", "sanidadeGeral", "presencaPragas", "nomesPragas", "intensidadeDanosPragas",
             "presencaDoencas", "nomesDoencas", "intensidadeDanosDoencas", "presencaDaninhas", "nomesDaninhas",
             "intensidadeInfestacao", "coberturaPalha", "intensidadeErosao", "corSolo", "texturaSolo", "compactacao",
-            "photo1Base64", "photo2Base64", "photo3Base64", "photo4Base64", "photo5Base64"
+            "photo1FileName", "photo1MimeType", "photo1CapturedAt", "photo1Base64",
+            "photo2FileName", "photo2MimeType", "photo2CapturedAt", "photo2Base64",
+            "photo3FileName", "photo3MimeType", "photo3CapturedAt", "photo3Base64",
+            "photo4FileName", "photo4MimeType", "photo4CapturedAt", "photo4Base64",
+            "photo5FileName", "photo5MimeType", "photo5CapturedAt", "photo5Base64"
         ).joinToString(",") { "\"$it\"" }
 
         val body = reports.value.joinToString("\n") { repository.reportToCsvLine(it) }

@@ -6,6 +6,7 @@ import com.example.georeport.data.GeoPhotoEntity
 import com.example.georeport.data.ReportEntity
 import com.example.georeport.data.ReportWithPhotos
 import java.io.File
+import java.util.Locale
 import java.util.UUID
 
 class GeoReportRepository(
@@ -42,15 +43,22 @@ class GeoReportRepository(
         val photoColumns = reportWithPhotos.photos
             .take(5)
             .map { photo ->
-                runCatching {
-                    val bytes = File(photo.filePath).readBytes()
+                val file = File(photo.filePath)
+                val fileName = file.name
+                val mimeType = mimeTypeFromFileName(fileName)
+                val capturedAt = photo.capturedAt.toString()
+                val base64 = runCatching {
+                    val bytes = file.readBytes()
                     Base64.encodeToString(bytes, Base64.NO_WRAP)
                 }.getOrDefault("")
+
+                listOf(fileName, mimeType, capturedAt, base64)
             }
             .toMutableList()
             .apply {
-                while (size < 5) add("")
+                while (size < 5) add(listOf("", "", "", ""))
             }
+            .flatten()
 
         val fields = listOf(
             r.id,
@@ -85,6 +93,16 @@ class GeoReportRepository(
         return fields.joinToString(",") { value ->
             val sanitized = value.replace("\"", "\"\"")
             "\"$sanitized\""
+        }
+    }
+
+    private fun mimeTypeFromFileName(fileName: String): String {
+        val extension = fileName.substringAfterLast('.', "").lowercase(Locale.US)
+        return when (extension) {
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "webp" -> "image/webp"
+            else -> "application/octet-stream"
         }
     }
 }
