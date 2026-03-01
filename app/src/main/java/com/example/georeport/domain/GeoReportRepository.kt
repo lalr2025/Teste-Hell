@@ -34,6 +34,8 @@ class GeoReportRepository(
         val file = File(filePath)
         if (!file.exists()) return@withContext
 
+        ensureReportExists(reportId, latitude, longitude)
+
         optimizeJpegFile(filePath)
         writeExifGps(filePath, latitude, longitude)
 
@@ -46,6 +48,46 @@ class GeoReportRepository(
                 latitude = latitude,
                 longitude = longitude,
                 capturedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
+    private suspend fun ensureReportExists(
+        reportId: String,
+        latitude: Double?,
+        longitude: Double?
+    ) {
+        if (dao.reportExists(reportId)) return
+
+        dao.insertReport(
+            ReportEntity(
+                id = reportId,
+                createdAt = System.currentTimeMillis(),
+                latitude = latitude,
+                longitude = longitude,
+                cultura = "",
+                cultivar = "",
+                faseFenologica = "",
+                espacamentoLinha = null,
+                espacamentoEntreLinha = null,
+                altura = null,
+                comprimentoPivoRaiz = null,
+                distribuicaoSistemaRadicular = "",
+                sanidadeGeral = "",
+                presencaPragas = "",
+                nomesPragas = "",
+                intensidadeDanosPragas = "",
+                presencaDoencas = "",
+                nomesDoencas = "",
+                intensidadeDanosDoencas = "",
+                presencaDaninhas = "",
+                nomesDaninhas = "",
+                intensidadeInfestacao = "",
+                coberturaPalha = "",
+                intensidadeErosao = "",
+                corSolo = "",
+                texturaSolo = "",
+                compactacao = ""
             )
         )
     }

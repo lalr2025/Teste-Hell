@@ -14,6 +14,9 @@ interface AppDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPhoto(photo: GeoPhotoEntity)
 
+    @Query("SELECT EXISTS(SELECT 1 FROM report WHERE id = :reportId)")
+    suspend fun reportExists(reportId: String): Boolean
+
     @Query("SELECT * FROM geo_photo WHERE reportId = :reportId ORDER BY capturedAt DESC")
     suspend fun photosByReport(reportId: String): List<GeoPhotoEntity>
 
