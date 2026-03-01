@@ -54,6 +54,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.roundToInt
+import kotlin.math.sin
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.tileprovider.tilesource.XYTileSource
@@ -138,6 +142,7 @@ private fun MapScreen(
     val context = LocalContext.current
     var basemap by rememberSaveable { mutableStateOf(BasemapOption.ESTRADAS) }
     var showLayers by rememberSaveable { mutableStateOf(false) }
+    var expandedClusterKey by rememberSaveable { mutableStateOf<String?>(null) }
 
     val satelliteSource = remember {
         XYTileSource(
@@ -216,22 +221,89 @@ private fun MapScreen(
 
                 mapView.overlays.removeAll(mapView.overlays.filterIsInstance<Marker>())
 
-                reports.forEach { rw ->
+                data class MarkerItem(
+                    val report: ReportWithPhotos,
+                    val lat: Double,
+                    val lon: Double
+                )
+
+                val points = reports.mapNotNull { rw ->
                     val lat = rw.report.latitude
                     val lon = rw.report.longitude
-                    if (lat != null && lon != null) {
+                    if (lat != null && lon != null) MarkerItem(rw, lat, lon) else null
+                }
+
+                val clusters = points.groupBy {
+                    val latBucket = (it.lat * 10000).roundToInt()
+                    val lonBucket = (it.lon * 10000).roundToInt()
+                    "$latBucket:$lonBucket"
+                }
+
+                clusters.forEach { (clusterKey, items) ->
+                    val centerLat = items.map { it.lat }.average()
+                    val centerLon = items.map { it.lon }.average()
+
+                    if (items.size == 1) {
+                        val item = items.first()
                         val marker = Marker(mapView).apply {
-                            position = GeoPoint(lat, lon)
+                            position = GeoPoint(item.lat, item.lon)
                             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                            title = "📍 ${rw.report.cultura}"
-                            subDescription = "${rw.report.cultivar} • ${formatDate(rw.report.createdAt)}"
+                            title = "📍 ${item.report.report.cultura}"
+                            subDescription = "${item.report.report.cultivar} • ${formatDate(item.report.report.createdAt)}"
                             setOnMarkerClickListener { selected, _ ->
-                                onMarkerClick(rw)
+                                onMarkerClick(item.report)
                                 selected.showInfoWindow()
                                 true
                             }
                         }
                         mapView.overlays.add(marker)
+                    } else {
+                        if (expandedClusterKey == clusterKey) {
+                            val radius = 0.00035
+                            items.forEachIndexed { index, item ->
+                                val angle = (2.0 * PI * index) / items.size
+                                val marker = Marker(mapView).apply {
+                                    position = GeoPoint(
+                                        centerLat + radius * cos(angle),
+                                        centerLon + radius * sin(angle)
+                                    )
+                                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                                    title = "📍 ${item.report.report.cultura}"
+                                    subDescription = "${item.report.report.cultivar} • ${formatDate(item.report.report.createdAt)}"
+                                    setOnMarkerClickListener { selected, _ ->
+                                        onMarkerClick(item.report)
+                                        selected.showInfoWindow()
+                                        true
+                                    }
+                                }
+                                mapView.overlays.add(marker)
+                            }
+
+                            val centerMarker = Marker(mapView).apply {
+                                position = GeoPoint(centerLat, centerLon)
+                                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                                title = "${items.size} relatórios"
+                                subDescription = "Toque para recolher"
+                                setOnMarkerClickListener { _, _ ->
+                                    expandedClusterKey = null
+                                    true
+                                }
+                            }
+                            mapView.overlays.add(centerMarker)
+                        } else {
+                            val clusterMarker = Marker(mapView).apply {
+                                position = GeoPoint(centerLat, centerLon)
+                                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                                title = "${items.size} relatórios"
+                                subDescription = "Toque para expandir"
+                                setOnMarkerClickListener { selected, _ ->
+                                    expandedClusterKey = clusterKey
+                                    selected.showInfoWindow()
+                                    true
+                                }
+                            }
+                            mapView.overlays.add(clusterMarker)
+                        }
                     }
                 }
 
