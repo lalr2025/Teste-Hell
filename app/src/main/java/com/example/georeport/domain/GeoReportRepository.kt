@@ -28,15 +28,30 @@ class GeoReportRepository(
 
     suspend fun savePhoto(
         reportId: String,
+        projectId: String,
+        projectName: String,
+        projectNumber: String,
+        projectCreatedAt: Long,
         filePath: String,
         latitude: Double?,
         longitude: Double?,
+        inspectionType: String,
         altitude: Double?
     ) = withContext(Dispatchers.IO) {
         val file = File(filePath)
         if (!file.exists()) return@withContext
 
-        ensureReportExists(reportId, latitude, longitude, altitude)
+        ensureReportExists(
+            reportId = reportId,
+            projectId = projectId,
+            projectName = projectName,
+            projectNumber = projectNumber,
+            projectCreatedAt = projectCreatedAt,
+            latitude = latitude,
+            longitude = longitude,
+            inspectionType = inspectionType,
+            altitude = altitude
+        )
 
         optimizeJpegFile(filePath)
         writeExifGps(filePath, latitude, longitude, altitude)
@@ -56,8 +71,13 @@ class GeoReportRepository(
 
     private suspend fun ensureReportExists(
         reportId: String,
+        projectId: String,
+        projectName: String,
+        projectNumber: String,
+        projectCreatedAt: Long,
         latitude: Double?,
         longitude: Double?,
+        inspectionType: String,
         altitude: Double?
     ) {
         if (dao.reportExists(reportId)) return
@@ -65,7 +85,12 @@ class GeoReportRepository(
         dao.insertReportIfAbsent(
             ReportEntity(
                 id = reportId,
+                projectId = projectId,
+                projectName = projectName,
+                projectNumber = projectNumber,
+                projectCreatedAt = projectCreatedAt,
                 createdAt = System.currentTimeMillis(),
+                inspectionType = inspectionType,
                 latitude = latitude,
                 longitude = longitude,
                 altitude = altitude,
@@ -98,7 +123,8 @@ class GeoReportRepository(
 
     suspend fun photosByReport(reportId: String): List<GeoPhotoEntity> = dao.photosByReport(reportId)
 
-    suspend fun listReports(): List<ReportWithPhotos> = dao.listReportsWithPhotos()
+    suspend fun listReports(projectId: String?): List<ReportWithPhotos> =
+        if (projectId.isNullOrBlank()) dao.listReportsWithPhotos() else dao.listReportsWithPhotosByProject(projectId)
 
     fun reportToCsvLine(reportWithPhotos: ReportWithPhotos): String {
         val r = reportWithPhotos.report
@@ -121,7 +147,12 @@ class GeoReportRepository(
 
         val fields = listOf(
             r.id,
+            r.projectId,
+            r.projectName,
+            r.projectNumber,
+            r.projectCreatedAt.toString(),
             r.createdAt.toString(),
+            r.inspectionType,
             r.latitude?.toString().orEmpty(),
             r.longitude?.toString().orEmpty(),
             r.cultura,
@@ -158,8 +189,8 @@ class GeoReportRepository(
 
 
 
-    suspend fun exportReportsZip(outputZipFile: File) = withContext(Dispatchers.IO) {
-        val reports = listReports()
+    suspend fun exportReportsZip(outputZipFile: File, projectId: String?) = withContext(Dispatchers.IO) {
+        val reports = listReports(projectId)
         outputZipFile.parentFile?.mkdirs()
         ZipOutputStream(outputZipFile.outputStream().buffered()).use { zip ->
             val reportsJson = JSONArray()
@@ -198,7 +229,12 @@ class GeoReportRepository(
                 reportsJson.put(
                     JSONObject()
                         .put("id", report.id)
+                        .put("projectId", report.projectId)
+                        .put("projectName", report.projectName)
+                        .put("projectNumber", report.projectNumber)
+                        .put("projectCreatedAt", report.projectCreatedAt)
                         .put("createdAt", report.createdAt)
+                        .put("inspectionType", report.inspectionType)
                         .put("latitude", report.latitude)
                         .put("longitude", report.longitude)
                         .put("altitude", report.altitude)
@@ -229,8 +265,17 @@ class GeoReportRepository(
                 )
             }
 
+            val projectJson = reports.firstOrNull()?.report?.let {
+                JSONObject()
+                    .put("id", it.projectId)
+                    .put("name", it.projectName)
+                    .put("number", it.projectNumber)
+                    .put("createdAt", it.projectCreatedAt)
+            } ?: JSONObject()
+
             val metadataJson = JSONObject()
                 .put("generatedAt", System.currentTimeMillis())
+                .put("project", projectJson)
                 .put("reports", reportsJson)
                 .toString(2)
 

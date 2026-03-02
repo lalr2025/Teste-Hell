@@ -15,10 +15,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 
+data class InspectionProject(
+    val id: String,
+    val name: String,
+    val number: String,
+    val createdAt: Long
+)
+
 data class DropOption(val label: String)
 
 @Parcelize
 data class ReportFormState(
+    val inspectionType: String = "",
     val cultura: String = "",
     val cultivar: String = "",
     val faseFenologica: String = "",
@@ -65,6 +73,19 @@ class ReportViewModel(
     val erosaoOptions = listOf("Alta", "Média", "Baixa")
     val texturaOptions = listOf("Arenoso", "Textura Média", "Argiloso")
     val compactacaoOptions = listOf("Alta", "Moderada", "Baixa", "Nenhuma")
+    val inspectionTypeOptions = listOf(
+        "Monitoramento Pragas/Doenças/Daninhas",
+        "Monitoramento Pragas/Doenças",
+        "Monitoramento Daninhas",
+        "Monitoramento Pragas",
+        "Monitoramento Doenças",
+        "Aptidão",
+        "Amostra Solo",
+        "Estimativa Produtividade",
+        "Amostra Foliar",
+        "Vistoria Preliminar",
+        "Vistoria Final"
+    )
 
     fun loadPhotos(reportId: String) {
         viewModelScope.launch {
@@ -72,9 +93,9 @@ class ReportViewModel(
         }
     }
 
-    fun refreshReports() {
+    fun refreshReports(projectId: String? = null) {
         viewModelScope.launch {
-            _reports.value = repository.listReports()
+            _reports.value = repository.listReports(projectId)
         }
     }
 
@@ -85,24 +106,43 @@ class ReportViewModel(
         }
     }
 
-    fun savePhoto(reportId: String, filePath: String, latitude: Double?, longitude: Double?, altitude: Double?) {
+    fun savePhoto(
+        reportId: String,
+        project: InspectionProject,
+        filePath: String,
+        latitude: Double?,
+        longitude: Double?,
+        inspectionType: String,
+        altitude: Double?
+    ) {
         viewModelScope.launch {
-            repository.savePhoto(reportId, filePath, latitude, longitude, altitude)
+            repository.savePhoto(
+                reportId = reportId,
+                projectId = project.id,
+                projectName = project.name,
+                projectNumber = project.number,
+                projectCreatedAt = project.createdAt,
+                filePath = filePath,
+                latitude = latitude,
+                longitude = longitude,
+                inspectionType = inspectionType,
+                altitude = altitude
+            )
             _photos.value = repository.photosByReport(reportId)
-            refreshReports()
+            refreshReports(project.id)
         }
     }
 
-    fun exportZip(file: File, onDone: (Result<Unit>) -> Unit) {
+    fun exportZip(file: File, projectId: String?, onDone: (Result<Unit>) -> Unit) {
         viewModelScope.launch {
-            val result = runCatching { repository.exportReportsZip(file) }
+            val result = runCatching { repository.exportReportsZip(file, projectId) }
             onDone(result)
         }
     }
 
     fun csvContent(): String {
         val header = listOf(
-            "id", "createdAt", "latitude", "longitude", "cultura", "cultivar", "faseFenologica",
+            "id", "projectId", "projectName", "projectNumber", "projectCreatedAt", "createdAt", "inspectionType", "latitude", "longitude", "cultura", "cultivar", "faseFenologica",
             "espacamentoLinha", "espacamentoEntreLinha", "altura", "comprimentoPivoRaiz",
             "distribuicaoSistemaRadicular", "sanidadeGeral", "presencaPragas", "nomesPragas", "intensidadeDanosPragas",
             "presencaDoencas", "nomesDoencas", "intensidadeDanosDoencas", "presencaDaninhas", "nomesDaninhas",

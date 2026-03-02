@@ -27,4 +27,8 @@ interface AppDao {
     @Transaction
     @Query("SELECT * FROM report ORDER BY createdAt DESC")
     suspend fun listReportsWithPhotos(): List<ReportWithPhotos>
+
+    @Transaction
+    @Query("SELECT * FROM report WHERE projectId = :projectId ORDER BY createdAt DESC")
+    suspend fun listReportsWithPhotosByProject(projectId: String): List<ReportWithPhotos>
 }

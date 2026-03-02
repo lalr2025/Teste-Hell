@@ -10,7 +10,12 @@ import androidx.room.Relation
 @Entity(tableName = "report")
 data class ReportEntity(
     @PrimaryKey val id: String,
+    val projectId: String,
+    val projectName: String,
+    val projectNumber: String,
+    val projectCreatedAt: Long,
     val createdAt: Long,
+    val inspectionType: String,
     val latitude: Double?,
     val longitude: Double?,
     val altitude: Double?,

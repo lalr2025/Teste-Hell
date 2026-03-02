@@ -61,6 +61,7 @@ import com.example.georeport.data.ReportEntity
 import com.example.georeport.data.ReportWithPhotos
 import com.example.georeport.domain.GeoReportRepository
 import com.example.georeport.ui.ReportFormState
+import com.example.georeport.ui.InspectionProject
 import com.example.georeport.ui.ReportViewModel
 import com.example.georeport.ui.ReportViewModelFactory
 import com.google.android.gms.location.LocationServices
@@ -79,6 +80,8 @@ import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -97,7 +100,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { MAP, FORM }
+private enum class Screen { HOME, MAP, FORM }
 
 private enum class BasemapOption {
     ESTRADAS_ESRI,
@@ -106,41 +109,125 @@ private enum class BasemapOption {
 }
 
 @Composable
+private fun HomeScreen(
+    projects: List<InspectionProject>,
+    onOpenProject: (InspectionProject) -> Unit,
+    onCreateProject: (name: String, number: String) -> Unit,
+    onImportProjectJson: (String) -> Unit
+) {
+    val context = LocalContext.current
+    var name by rememberSaveable { mutableStateOf("") }
+    var number by rememberSaveable { mutableStateOf("") }
+
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            }.getOrNull()?.let(onImportProjectJson)
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text("🌱 Agro Guaxupé", style = MaterialTheme.typography.headlineMedium)
+        Text("Selecione uma vistoria existente, crie nova ou importe JSON.")
+
+        OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Nome da vistoria") })
+        OutlinedTextField(number, { number = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Número da vistoria") })
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                if (name.isNotBlank() && number.isNotBlank()) {
+                    onCreateProject(name.trim(), number.trim())
+                    name = ""
+                    number = ""
+                }
+            }) { Text("Criar nova vistoria") }
+
+            Button(onClick = { importLauncher.launch(arrayOf("application/json", "text/plain")) }) {
+                Text("Upload JSON")
+            }
+        }
+
+        HorizontalDivider()
+        Text("Vistorias existentes", style = MaterialTheme.typography.titleMedium)
+        projects.forEach { project ->
+            Button(onClick = { onOpenProject(project) }, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.fillMaxWidth()) {
+                    Text(project.name, style = MaterialTheme.typography.titleMedium)
+                    Text("Número: ${project.number}")
+                    Text("Criado em: ${formatDate(project.createdAt)}")
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun GeoReportApp(viewModel: ReportViewModel) {
     val context = LocalContext.current
     val reports by viewModel.reports.collectAsState()
-    var screen by rememberSaveable { mutableStateOf(Screen.MAP) }
+    var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var selectedReport by remember { mutableStateOf<ReportWithPhotos?>(null) }
     var editingReport by remember { mutableStateOf<ReportEntity?>(null) }
+    var currentProject by remember { mutableStateOf<InspectionProject?>(null) }
+    var projects by remember { mutableStateOf(loadProjects(context)) }
     var exportingZip by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.refreshReports() }
 
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, currentProject?.id) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.refreshReports()
+                viewModel.refreshReports(currentProject?.id)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    if (screen == Screen.MAP) {
+    if (screen == Screen.HOME) {
+        HomeScreen(
+            projects = projects,
+            onOpenProject = {
+                currentProject = it
+                viewModel.refreshReports(it.id)
+                screen = Screen.MAP
+            },
+            onCreateProject = { name, number ->
+                val created = InspectionProject(UUID.randomUUID().toString(), name, number, System.currentTimeMillis())
+                projects = (projects + created).sortedByDescending { p -> p.createdAt }
+                saveProjects(context, projects)
+                currentProject = created
+                viewModel.refreshReports(created.id)
+                screen = Screen.MAP
+            },
+            onImportProjectJson = { rawJson ->
+                val imported = projectFromJson(rawJson)
+                projects = (projects + imported).distinctBy { it.id }.sortedByDescending { p -> p.createdAt }
+                saveProjects(context, projects)
+            }
+        )
+    } else if (screen == Screen.MAP) {
         MapScreen(
             reports = reports,
             onNewReport = {
                 editingReport = null
                 screen = Screen.FORM
             },
+            onBackHome = {
+                screen = Screen.HOME
+            },
             onMarkerClick = { selectedReport = it },
-            onRefreshMap = { viewModel.refreshReports() },
+            onRefreshMap = { viewModel.refreshReports(currentProject?.id) },
             onExportZip = {
                 if (exportingZip) return@MapScreen
                 exportingZip = true
                 val file = File(context.cacheDir, "relatorios_georeferenciados.zip")
-                viewModel.exportZip(file) { result ->
+                viewModel.exportZip(file, currentProject?.id) { result ->
                     exportingZip = false
                     result.onSuccess {
                         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
@@ -171,10 +258,11 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
     } else {
         FormScreen(
             viewModel = viewModel,
+            project = currentProject,
             initialReport = editingReport,
             onFinish = {
                 editingReport = null
-                viewModel.refreshReports()
+                viewModel.refreshReports(currentProject?.id)
                 screen = Screen.MAP
             }
         )
@@ -185,6 +273,7 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
 private fun MapScreen(
     reports: List<ReportWithPhotos>,
     onNewReport: () -> Unit,
+    onBackHome: () -> Unit,
     onMarkerClick: (ReportWithPhotos) -> Unit,
     onRefreshMap: () -> Unit,
     onExportZip: () -> Unit
@@ -208,6 +297,7 @@ private fun MapScreen(
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            Button(onClick = onBackHome) { Text("Início") }
             Button(onClick = onNewReport) { Text("Novo relatório") }
             Button(onClick = onRefreshMap) { Text("Atualizar mapa") }
             Button(onClick = onExportZip) { Text("Baixar ZIP") }
@@ -448,7 +538,12 @@ private fun ReportDetailDialog(report: ReportWithPhotos, onDismiss: () -> Unit, 
 }
 
 @Composable
-private fun FormScreen(viewModel: ReportViewModel, initialReport: ReportEntity? = null, onFinish: () -> Unit) {
+private fun FormScreen(
+    viewModel: ReportViewModel,
+    project: InspectionProject?,
+    initialReport: ReportEntity? = null,
+    onFinish: () -> Unit
+) {
     val context = LocalContext.current
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     val isEditing = initialReport != null
@@ -493,7 +588,17 @@ private fun FormScreen(viewModel: ReportViewModel, initialReport: ReportEntity? 
         if (!path.isNullOrBlank()) {
             val photoFile = File(path)
             if (photoFile.exists()) {
-                viewModel.savePhoto(reportId, path, latitude, longitude, altitude)
+                if (project != null) {
+                    viewModel.savePhoto(
+                        reportId = reportId,
+                        project = project,
+                        filePath = path,
+                        latitude = latitude,
+                        longitude = longitude,
+                        inspectionType = form.inspectionType,
+                        altitude = altitude
+                    )
+                }
                 unsaved = true
             }
         }
@@ -552,6 +657,7 @@ private fun FormScreen(viewModel: ReportViewModel, initialReport: ReportEntity? 
         Text("Altitude: ${altitude ?: "-"}")
 
         DropdownField("1- Cultura", form.cultura, viewModel.culturaOptions) { form = form.copy(cultura = it); unsaved = true }
+        DropdownField("Tipo de vistoria", form.inspectionType, viewModel.inspectionTypeOptions) { form = form.copy(inspectionType = it); unsaved = true }
         TextField("2- Cultivar", form.cultivar) { form = form.copy(cultivar = it); unsaved = true }
         TextField("3- Fase Fenológica", form.faseFenologica) { form = form.copy(faseFenologica = it); unsaved = true }
         NumberField("4- Espaçamento Linha (m)", form.espacamentoLinha) { form = form.copy(espacamentoLinha = it); unsaved = true }
@@ -603,7 +709,12 @@ private fun FormScreen(viewModel: ReportViewModel, initialReport: ReportEntity? 
         Button(onClick = {
             val entity = ReportEntity(
                 id = reportId,
+                projectId = project?.id ?: "SEM_PROJETO",
+                projectName = project?.name ?: "Sem projeto",
+                projectNumber = project?.number ?: "-",
+                projectCreatedAt = project?.createdAt ?: System.currentTimeMillis(),
                 createdAt = initialReport?.createdAt ?: System.currentTimeMillis(),
+                inspectionType = form.inspectionType,
                 latitude = latitude,
                 longitude = longitude,
                 altitude = altitude,
@@ -758,6 +869,7 @@ private fun esriTileSource(layerName: String): OnlineTileSourceBase {
 }
 
 private fun ReportEntity.toFormState(): ReportFormState = ReportFormState(
+    inspectionType = inspectionType,
     cultura = cultura,
     cultivar = cultivar,
     faseFenologica = faseFenologica,
@@ -791,3 +903,50 @@ private fun appVersionName(context: Context): String = runCatching {
 
 private fun formatDate(ts: Long): String =
     SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()).format(Date(ts))
+
+private fun loadProjects(context: Context): List<InspectionProject> {
+    val prefs = context.getSharedPreferences("georeport_prefs", Context.MODE_PRIVATE)
+    val raw = prefs.getString("projects", "[]") ?: "[]"
+    val arr = JSONArray(raw)
+    return buildList {
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            add(
+                InspectionProject(
+                    id = o.optString("id", UUID.randomUUID().toString()),
+                    name = o.optString("name", "Vistoria"),
+                    number = o.optString("number", "-"),
+                    createdAt = o.optLong("createdAt", System.currentTimeMillis())
+                )
+            )
+        }
+    }
+}
+
+private fun saveProjects(context: Context, projects: List<InspectionProject>) {
+    val arr = JSONArray()
+    projects.forEach { p ->
+        arr.put(
+            JSONObject()
+                .put("id", p.id)
+                .put("name", p.name)
+                .put("number", p.number)
+                .put("createdAt", p.createdAt)
+        )
+    }
+    context.getSharedPreferences("georeport_prefs", Context.MODE_PRIVATE)
+        .edit()
+        .putString("projects", arr.toString())
+        .apply()
+}
+
+private fun projectFromJson(rawJson: String): InspectionProject {
+    val root = JSONObject(rawJson)
+    val firstReport = root.optJSONArray("reports")?.optJSONObject(0)
+    return InspectionProject(
+        id = firstReport?.optString("projectId").takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString(),
+        name = firstReport?.optString("projectName").takeUnless { it.isNullOrBlank() } ?: "Vistoria importada",
+        number = firstReport?.optString("projectNumber").takeUnless { it.isNullOrBlank() } ?: "IMPORT",
+        createdAt = firstReport?.optLong("projectCreatedAt") ?: System.currentTimeMillis()
+    )
+}
