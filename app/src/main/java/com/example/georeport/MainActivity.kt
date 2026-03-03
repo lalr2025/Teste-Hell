@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -672,7 +673,13 @@ private fun ReportDetailDialog(report: ReportWithPhotos, onDismiss: () -> Unit, 
         onDismissRequest = onDismiss,
         title = { Text("🌱 ${report.report.cultura}") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Text("Cultivar: ${report.report.cultivar}")
                 Text("Data/Hora: ${formatDate(report.report.createdAt)}")
                 Text("Lat/Lon: ${report.report.latitude} / ${report.report.longitude}")
