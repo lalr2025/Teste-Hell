@@ -942,10 +942,14 @@ private fun FormScreen(
             }
         }
 
+        val supportsMediaInCustomProject = project?.questionnaireMode.equals("CUSTOM", ignoreCase = true) ||
+            project?.questionnaireMode.equals("IMPORTED", ignoreCase = true)
         val hasPhotoQuestion = customQuestions.any { it.type.equals("photo", ignoreCase = true) }
         val hasAudioQuestion = customQuestions.any { it.type.equals("audio", ignoreCase = true) }
+        val showPhotoCapture = hasPhotoQuestion || supportsMediaInCustomProject
+        val showAudioCapture = hasAudioQuestion || supportsMediaInCustomProject
 
-        if (hasPhotoQuestion) {
+        if (showPhotoCapture) {
         Button(onClick = {
             if (photos.size >= 5) return@Button
 
@@ -973,7 +977,7 @@ private fun FormScreen(
 
         }
 
-        if (hasAudioQuestion) {
+        if (showAudioCapture) {
         Button(onClick = {
             if (isRecordingAudio) {
                 runCatching { recorder?.stop() }
