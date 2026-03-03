@@ -1,0 +1,18 @@
+* text=auto eol=lf
+
+# Explicit text files
+*.yml text
+*.yaml text
+*.md text
+*.kts text
+*.kt text
+*.xml text
+*.sql text
+*.properties text
+*.pro text
+
+# Common binaries
+*.apk binary
+*.jar binary
+*.jks binary
+*.keystore binary
