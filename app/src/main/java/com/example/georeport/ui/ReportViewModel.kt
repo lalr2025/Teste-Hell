@@ -151,15 +151,32 @@ class ReportViewModel(
 
     fun saveAudio(
         reportId: String,
+        project: InspectionProject,
         filePath: String,
         latitude: Double?,
         longitude: Double?,
         accuracyMeters: Double?,
         startedAt: Long,
-        endedAt: Long
+        endedAt: Long,
+        inspectionType: String,
+        altitude: Double?
     ) {
         viewModelScope.launch {
-            repository.saveAudio(reportId, filePath, latitude, longitude, accuracyMeters, startedAt, endedAt)
+            repository.saveAudio(
+                reportId = reportId,
+                projectId = project.id,
+                projectName = project.name,
+                projectNumber = project.number,
+                projectCreatedAt = project.createdAt,
+                filePath = filePath,
+                latitude = latitude,
+                longitude = longitude,
+                accuracyMeters = accuracyMeters,
+                startedAt = startedAt,
+                endedAt = endedAt,
+                inspectionType = inspectionType,
+                altitude = altitude
+            )
             _audios.value = repository.audiosByReport(reportId)
         }
     }

@@ -130,13 +130,31 @@ class GeoReportRepository(
 
     suspend fun saveAudio(
         reportId: String,
+        projectId: String,
+        projectName: String,
+        projectNumber: String,
+        projectCreatedAt: Long,
         filePath: String,
         latitude: Double?,
         longitude: Double?,
         accuracyMeters: Double?,
         startedAt: Long,
-        endedAt: Long
+        endedAt: Long,
+        inspectionType: String,
+        altitude: Double?
     ) {
+        ensureReportExists(
+            reportId = reportId,
+            projectId = projectId,
+            projectName = projectName,
+            projectNumber = projectNumber,
+            projectCreatedAt = projectCreatedAt,
+            latitude = latitude,
+            longitude = longitude,
+            inspectionType = inspectionType,
+            altitude = altitude
+        )
+
         dao.insertAudio(
             GeoAudioEntity(
                 id = UUID.randomUUID().toString(),

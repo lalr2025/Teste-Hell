@@ -708,7 +708,9 @@ private fun FormScreen(
     val context = LocalContext.current
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     val isEditing = initialReport != null
-    val reportId = initialReport?.id ?: rememberSaveable { UUID.randomUUID().toString() }
+    val reportId = rememberSaveable(initialReport?.id, project?.id) {
+        initialReport?.id ?: UUID.randomUUID().toString()
+    }
     var form by rememberSaveable(reportId) { mutableStateOf(initialReport?.toFormState() ?: ReportFormState()) }
     var latitude by rememberSaveable(reportId) { mutableStateOf(initialReport?.latitude) }
     var longitude by rememberSaveable(reportId) { mutableStateOf(initialReport?.longitude) }
@@ -742,7 +744,7 @@ private fun FormScreen(
         if (!isEditing) refreshLocation()
     }
 
-    LaunchedEffect(initialReport?.id, customQuestions.size) {
+    LaunchedEffect(initialReport?.id, project?.id, customQuestions.size) {
         customAnswers.clear()
         val fromSaved = parseAnswersMap(initialReport?.surveyAnswersJson)
         customQuestions.forEach { q ->
@@ -917,15 +919,20 @@ private fun FormScreen(
                 val startedAt = audioStartedAt ?: endedAt
                 currentAudioPath?.let { path ->
                     if (File(path).exists()) {
-                        viewModel.saveAudio(
-                            reportId = reportId,
-                            filePath = path,
-                            latitude = latitude,
-                            longitude = longitude,
-                            accuracyMeters = null,
-                            startedAt = startedAt,
-                            endedAt = endedAt
-                        )
+                        project?.let {
+                            viewModel.saveAudio(
+                                reportId = reportId,
+                                project = it,
+                                filePath = path,
+                                latitude = latitude,
+                                longitude = longitude,
+                                accuracyMeters = null,
+                                startedAt = startedAt,
+                                endedAt = endedAt,
+                                inspectionType = form.inspectionType,
+                                altitude = altitude
+                            )
+                        }
                     }
                 }
                 currentAudioPath = null
