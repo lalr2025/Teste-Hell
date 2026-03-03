@@ -40,6 +40,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -84,6 +86,13 @@ import org.osmdroid.views.overlay.Marker
 import org.json.JSONArray
 import org.json.JSONObject
 
+private data class ProjectQuestion(
+    val id: String,
+    val label: String,
+    val type: String,
+    val options: List<String>
+)
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -113,13 +122,18 @@ private enum class BasemapOption {
 private fun HomeScreen(
     projects: List<InspectionProject>,
     onOpenProject: (InspectionProject) -> Unit,
-    onCreateProject: (name: String, number: String) -> Unit,
+    onCreateProject: (name: String, number: String, questionnaireMode: String, questionsJson: String) -> Unit,
     onImportProject: (android.net.Uri) -> Unit,
     onDeleteProject: (InspectionProject) -> Unit
 ) {
     val context = LocalContext.current
     var name by rememberSaveable { mutableStateOf("") }
     var number by rememberSaveable { mutableStateOf("") }
+    var customQuestionnaire by rememberSaveable { mutableStateOf(false) }
+    var newQuestionLabel by rememberSaveable { mutableStateOf("") }
+    var newQuestionType by rememberSaveable { mutableStateOf("text") }
+    var newQuestionOptions by rememberSaveable { mutableStateOf("") }
+    val customQuestions = remember { mutableStateListOf<ProjectQuestion>() }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onImportProject(uri)
@@ -138,9 +152,30 @@ private fun HomeScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 if (name.isNotBlank() && number.isNotBlank()) {
-                    onCreateProject(name.trim(), number.trim())
+                    val questionsJson = if (customQuestionnaire) {
+                        JSONArray().apply {
+                            customQuestions.forEach { q ->
+                                put(
+                                    JSONObject()
+                                        .put("id", q.id)
+                                        .put("label", q.label)
+                                        .put("type", q.type)
+                                        .put("options", JSONArray(q.options))
+                                )
+                            }
+                        }.toString()
+                    } else "[]"
+
+                    onCreateProject(
+                        name.trim(),
+                        number.trim(),
+                        if (customQuestionnaire) "CUSTOM" else "DEFAULT",
+                        questionsJson
+                    )
                     name = ""
                     number = ""
+                    customQuestionnaire = false
+                    customQuestions.clear()
                 }
             }) { Text("Criar nova vistoria") }
 
@@ -150,6 +185,37 @@ private fun HomeScreen(
         }
 
         HorizontalDivider()
+        Button(onClick = { customQuestionnaire = !customQuestionnaire }) {
+            Text(if (customQuestionnaire) "Questionário personalizado ativo" else "Usar questionário personalizado")
+        }
+        if (customQuestionnaire) {
+            Text("Monte até 50 perguntas. Após criar o projeto, não será possível adicionar mais perguntas.")
+            OutlinedTextField(newQuestionLabel, { newQuestionLabel = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Pergunta") })
+            DropdownField("Tipo de resposta", newQuestionType, listOf("text", "select")) { newQuestionType = it }
+            if (newQuestionType == "select") {
+                OutlinedTextField(
+                    newQuestionOptions,
+                    { newQuestionOptions = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Opções separadas por vírgula") }
+                )
+            }
+            Button(onClick = {
+                if (customQuestions.size >= 50 || newQuestionLabel.isBlank()) return@Button
+                val options = if (newQuestionType == "select") newQuestionOptions.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
+                customQuestions.add(ProjectQuestion(UUID.randomUUID().toString(), newQuestionLabel.trim(), newQuestionType, options))
+                newQuestionLabel = ""
+                newQuestionOptions = ""
+                newQuestionType = "text"
+            }) {
+                Text("Adicionar pergunta (${customQuestions.size}/50)")
+            }
+            customQuestions.forEachIndexed { idx, q ->
+                Text("${idx + 1}. ${q.label} [${q.type}]")
+            }
+            HorizontalDivider()
+        }
+
         Text("Vistorias existentes", style = MaterialTheme.typography.titleMedium)
         projects.forEach { project ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -200,8 +266,15 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
                 viewModel.refreshReports(it.id)
                 screen = Screen.MAP
             },
-            onCreateProject = { name, number ->
-                val created = InspectionProject(UUID.randomUUID().toString(), name, number, System.currentTimeMillis())
+            onCreateProject = { name, number, questionnaireMode, questionsJson ->
+                val created = InspectionProject(
+                    id = UUID.randomUUID().toString(),
+                    name = name,
+                    number = number,
+                    createdAt = System.currentTimeMillis(),
+                    questionnaireMode = questionnaireMode,
+                    questionsJson = questionsJson
+                )
                 projects = (projects + created).sortedByDescending { p -> p.createdAt }
                 saveProjects(context, projects)
                 currentProject = created
@@ -579,10 +652,9 @@ private fun FormScreen(
     var currentAudioPath by rememberSaveable { mutableStateOf<String?>(null) }
     var audioStartedAt by rememberSaveable { mutableStateOf<Long?>(null) }
     var isRecordingAudio by rememberSaveable { mutableStateOf(false) }
-    var useDynamicTemplate by rememberSaveable(reportId) { mutableStateOf(false) }
-    var templateObs by rememberSaveable(reportId) { mutableStateOf("") }
-    var templateRisco by rememberSaveable(reportId) { mutableStateOf("") }
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    val customQuestions = remember(project?.id) { parseProjectQuestions(project?.questionsJson) }
+    val customAnswers = remember(reportId) { mutableStateMapOf<String, String>() }
     var unsaved by rememberSaveable { mutableStateOf(false) }
     var askLeave by rememberSaveable { mutableStateOf(false) }
     val photos by viewModel.photos.collectAsState()
@@ -603,6 +675,14 @@ private fun FormScreen(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
         if (!isEditing) refreshLocation()
+    }
+
+    LaunchedEffect(initialReport?.id, customQuestions.size) {
+        customAnswers.clear()
+        val fromSaved = parseAnswersMap(initialReport?.surveyAnswersJson)
+        customQuestions.forEach { q ->
+            customAnswers[q.id] = fromSaved[q.id].orEmpty()
+        }
     }
 
     val takePhotoLauncher = rememberLauncherForActivityResult(
@@ -643,6 +723,7 @@ private fun FormScreen(
         requestPermissionsLauncher.launch(
             arrayOf(
                 Manifest.permission.CAMERA,
+                Manifest.permission.RECORD_AUDIO,
                 Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION
             )
@@ -688,12 +769,21 @@ private fun FormScreen(
 
         DropdownField("1- Cultura", form.cultura, viewModel.culturaOptions) { form = form.copy(cultura = it); unsaved = true }
         DropdownField("Tipo de vistoria", form.inspectionType, viewModel.inspectionTypeOptions) { form = form.copy(inspectionType = it); unsaved = true }
-        Button(onClick = { useDynamicTemplate = !useDynamicTemplate }) {
-            Text(if (useDynamicTemplate) "Usando template dinâmico" else "Usar template dinâmico")
-        }
-        if (useDynamicTemplate) {
-            DropdownField("Template: Risco", templateRisco, listOf("Baixo", "Médio", "Alto")) { templateRisco = it; unsaved = true }
-            TextField("Template: Observações", templateObs) { templateObs = it; unsaved = true }
+        if (project?.questionnaireMode == "CUSTOM") {
+            Text("Questionário customizado do projeto", style = MaterialTheme.typography.titleMedium)
+            customQuestions.forEach { q ->
+                if (q.type == "select") {
+                    DropdownField(q.label, customAnswers[q.id].orEmpty(), q.options) {
+                        customAnswers[q.id] = it
+                        unsaved = true
+                    }
+                } else {
+                    TextField(q.label, customAnswers[q.id].orEmpty()) {
+                        customAnswers[q.id] = it
+                        unsaved = true
+                    }
+                }
+            }
         }
         TextField("2- Cultivar", form.cultivar) { form = form.copy(cultivar = it); unsaved = true }
         TextField("3- Fase Fenológica", form.faseFenologica) { form = form.copy(faseFenologica = it); unsaved = true }
@@ -767,18 +857,32 @@ private fun FormScreen(
                 currentAudioPath = null
                 audioStartedAt = null
             } else {
+                val hasAudioPermission = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.RECORD_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+                if (!hasAudioPermission) {
+                    requestPermissionsLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+                    return@Button
+                }
                 val audioFile = createAudioFile(context, project?.id ?: reportId)
                 currentAudioPath = audioFile.absolutePath
-                val mediaRecorder = MediaRecorder(context)
-                mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-                mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                mediaRecorder.setOutputFile(audioFile.absolutePath)
-                mediaRecorder.prepare()
-                mediaRecorder.start()
-                recorder = mediaRecorder
-                audioStartedAt = System.currentTimeMillis()
-                isRecordingAudio = true
+                runCatching {
+                    val mediaRecorder = MediaRecorder(context)
+                    mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+                    mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                    mediaRecorder.setOutputFile(audioFile.absolutePath)
+                    mediaRecorder.prepare()
+                    mediaRecorder.start()
+                    recorder = mediaRecorder
+                    audioStartedAt = System.currentTimeMillis()
+                    isRecordingAudio = true
+                }.onFailure {
+                    recorder = null
+                    currentAudioPath = null
+                    Toast.makeText(context, "Falha ao iniciar gravação de áudio: ${it.message}", Toast.LENGTH_LONG).show()
+                }
             }
             unsaved = true
         }) {
@@ -794,10 +898,9 @@ private fun FormScreen(
                 projectCreatedAt = project?.createdAt ?: System.currentTimeMillis(),
                 createdAt = initialReport?.createdAt ?: System.currentTimeMillis(),
                 inspectionType = form.inspectionType,
-                surveyAnswersJson = JSONObject()
-                    .put("useDynamicTemplate", useDynamicTemplate)
-                    .put("template", JSONObject().put("risco", templateRisco).put("observacoes", templateObs))
-                    .toString(),
+                surveyAnswersJson = JSONObject().apply {
+                    customAnswers.forEach { (key, value) -> put(key, value) }
+                }.toString(),
                 latitude = latitude,
                 longitude = longitude,
                 altitude = altitude,
@@ -1006,7 +1109,9 @@ private fun loadProjects(context: Context): List<InspectionProject> {
                     id = o.optString("id", UUID.randomUUID().toString()),
                     name = o.optString("name", "Vistoria"),
                     number = o.optString("number", "-"),
-                    createdAt = o.optLong("createdAt", System.currentTimeMillis())
+                    createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+                    questionnaireMode = o.optString("questionnaireMode", "DEFAULT"),
+                    questionsJson = o.optJSONArray("questions")?.toString() ?: "[]"
                 )
             )
         }
@@ -1022,6 +1127,8 @@ private fun saveProjects(context: Context, projects: List<InspectionProject>) {
                 .put("name", p.name)
                 .put("number", p.number)
                 .put("createdAt", p.createdAt)
+                .put("questionnaireMode", p.questionnaireMode)
+                .put("questions", JSONArray(p.questionsJson))
         )
     }
     context.getSharedPreferences("georeport_prefs", Context.MODE_PRIVATE)
@@ -1037,6 +1144,39 @@ private fun projectFromJson(rawJson: String): InspectionProject {
         id = firstReport?.optString("projectId").takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString(),
         name = firstReport?.optString("projectName").takeUnless { it.isNullOrBlank() } ?: "Vistoria importada",
         number = firstReport?.optString("projectNumber").takeUnless { it.isNullOrBlank() } ?: "IMPORT",
-        createdAt = firstReport?.optLong("projectCreatedAt") ?: System.currentTimeMillis()
+        createdAt = firstReport?.optLong("projectCreatedAt") ?: System.currentTimeMillis(),
+        questionnaireMode = "DEFAULT",
+        questionsJson = "[]"
     )
+}
+
+private fun parseProjectQuestions(raw: String?): List<ProjectQuestion> {
+    val arr = JSONArray(raw ?: "[]")
+    return buildList {
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val options = o.optJSONArray("options")
+            add(
+                ProjectQuestion(
+                    id = o.optString("id", UUID.randomUUID().toString()),
+                    label = o.optString("label", "Pergunta"),
+                    type = o.optString("type", "text"),
+                    options = buildList {
+                        if (options != null) {
+                            for (j in 0 until options.length()) add(options.optString(j))
+                        }
+                    }
+                )
+            )
+        }
+    }
+}
+
+private fun parseAnswersMap(raw: String?): Map<String, String> {
+    val obj = JSONObject(raw ?: "{}")
+    return buildMap {
+        obj.keys().forEach { key ->
+            put(key, obj.optString(key, ""))
+        }
+    }
 }

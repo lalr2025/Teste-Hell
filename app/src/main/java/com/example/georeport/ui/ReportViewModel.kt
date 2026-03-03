@@ -22,7 +22,9 @@ data class InspectionProject(
     val id: String,
     val name: String,
     val number: String,
-    val createdAt: Long
+    val createdAt: Long,
+    val questionnaireMode: String = "DEFAULT",
+    val questionsJson: String = "[]"
 )
 
 data class DropOption(val label: String)

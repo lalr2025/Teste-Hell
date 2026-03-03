@@ -441,6 +441,25 @@ class GeoReportRepository(
                     )
                 )
             }
+
+            val audios = r.optJSONArray("audio") ?: JSONArray()
+            for (a in 0 until audios.length()) {
+                val aj = audios.optJSONObject(a) ?: continue
+                val rel = aj.optString("file")
+                val absolute = mediaBase?.resolve(rel)?.absolutePath ?: rel
+                dao.insertAudio(
+                    GeoAudioEntity(
+                        id = UUID.randomUUID().toString(),
+                        reportId = reportId,
+                        filePath = absolute,
+                        latitude = aj.optDouble("lat").takeUnless { it.isNaN() },
+                        longitude = aj.optDouble("lon").takeUnless { it.isNaN() },
+                        accuracyMeters = aj.optDouble("accuracy_m").takeUnless { it.isNaN() },
+                        startedAt = aj.optLong("start_ts", System.currentTimeMillis()),
+                        endedAt = aj.optLong("end_ts", System.currentTimeMillis())
+                    )
+                )
+            }
         }
         importedProjectId
     }
