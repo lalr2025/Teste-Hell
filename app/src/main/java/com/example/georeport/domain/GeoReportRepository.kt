@@ -5,6 +5,7 @@ import androidx.exifinterface.media.ExifInterface
 import android.location.Location
 import android.graphics.BitmapFactory
 import com.example.georeport.data.AppDao
+import com.example.georeport.data.GeoAudioEntity
 import com.example.georeport.data.GeoPhotoEntity
 import com.example.georeport.data.ReportEntity
 import com.example.georeport.data.ReportWithPhotos
@@ -12,6 +13,7 @@ import java.io.File
 import java.util.Locale
 import java.util.UUID
 import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import org.json.JSONArray
 import org.json.JSONObject
@@ -91,6 +93,7 @@ class GeoReportRepository(
                 projectCreatedAt = projectCreatedAt,
                 createdAt = System.currentTimeMillis(),
                 inspectionType = inspectionType,
+                surveyAnswersJson = "{}",
                 latitude = latitude,
                 longitude = longitude,
                 altitude = altitude,
@@ -122,6 +125,36 @@ class GeoReportRepository(
     }
 
     suspend fun photosByReport(reportId: String): List<GeoPhotoEntity> = dao.photosByReport(reportId)
+
+    suspend fun audiosByReport(reportId: String): List<GeoAudioEntity> = dao.audiosByReport(reportId)
+
+    suspend fun saveAudio(
+        reportId: String,
+        filePath: String,
+        latitude: Double?,
+        longitude: Double?,
+        accuracyMeters: Double?,
+        startedAt: Long,
+        endedAt: Long
+    ) {
+        dao.insertAudio(
+            GeoAudioEntity(
+                id = UUID.randomUUID().toString(),
+                reportId = reportId,
+                filePath = filePath,
+                latitude = latitude,
+                longitude = longitude,
+                accuracyMeters = accuracyMeters,
+                startedAt = startedAt,
+                endedAt = endedAt
+            )
+        )
+    }
+
+    suspend fun deleteProject(projectId: String, mediaDir: File?) = withContext(Dispatchers.IO) {
+        dao.deleteProjectReports(projectId)
+        mediaDir?.takeIf { it.exists() }?.deleteRecursively()
+    }
 
     suspend fun listReports(projectId: String?): List<ReportWithPhotos> =
         if (projectId.isNullOrBlank()) dao.listReportsWithPhotos() else dao.listReportsWithPhotosByProject(projectId)
@@ -194,10 +227,12 @@ class GeoReportRepository(
         outputZipFile.parentFile?.mkdirs()
         ZipOutputStream(outputZipFile.outputStream().buffered()).use { zip ->
             val reportsJson = JSONArray()
+            val featuresJson = JSONArray()
 
             reports.forEach { reportWithPhotos ->
                 val report = reportWithPhotos.report
                 val photosJson = JSONArray()
+                val audioJson = JSONArray()
 
                 reportWithPhotos.photos.take(5).forEachIndexed { index, photo ->
                     val photoFile = File(photo.filePath)
@@ -215,7 +250,7 @@ class GeoReportRepository(
                         JSONObject()
                             .put("id", photo.id)
                             .put("fileName", photoFile.name)
-                            .put("zipPath", zipPhotoName)
+                            .put("file", zipPhotoName)
                             .put("mimeType", mimeTypeFromFileName(photoFile.name))
                             .put("capturedAt", photo.capturedAt)
                             .put("latitude", photo.latitude)
@@ -226,6 +261,50 @@ class GeoReportRepository(
                     )
                 }
 
+                dao.audiosByReport(report.id).forEachIndexed { index, audio ->
+                    val audioFile = File(audio.filePath)
+                    val zipAudioName = "audio/${report.projectId}/${index + 1}_${audioFile.name}"
+                    if (audioFile.exists()) {
+                        zip.putNextEntry(ZipEntry(zipAudioName))
+                        audioFile.inputStream().use { it.copyTo(zip) }
+                        zip.closeEntry()
+                    }
+                    audioJson.put(
+                        JSONObject()
+                            .put("file", zipAudioName)
+                            .put("mime", "audio/mp4")
+                            .put("lat", audio.latitude)
+                            .put("lon", audio.longitude)
+                            .put("accuracy_m", audio.accuracyMeters)
+                            .put("start_ts", audio.startedAt)
+                            .put("end_ts", audio.endedAt)
+                    )
+                }
+
+                featuresJson.put(
+                    JSONObject()
+                        .put("type", "Feature")
+                        .put(
+                            "geometry",
+                            JSONObject()
+                                .put("type", "Point")
+                                .put("coordinates", JSONArray().put(report.longitude).put(report.latitude))
+                        )
+                        .put(
+                            "properties",
+                            JSONObject()
+                                .put("id", report.id)
+                                .put("cultura", report.cultura)
+                                .put("createdAt", report.createdAt)
+                                .put("photos", JSONArray().apply {
+                                    for (i in 0 until photosJson.length()) put(photosJson.getJSONObject(i).optString("file"))
+                                })
+                                .put("audio", JSONArray().apply {
+                                    for (i in 0 until audioJson.length()) put(audioJson.getJSONObject(i).optString("file"))
+                                })
+                        )
+                )
+
                 reportsJson.put(
                     JSONObject()
                         .put("id", report.id)
@@ -235,6 +314,7 @@ class GeoReportRepository(
                         .put("projectCreatedAt", report.projectCreatedAt)
                         .put("createdAt", report.createdAt)
                         .put("inspectionType", report.inspectionType)
+                        .put("surveyAnswers", JSONObject(report.surveyAnswersJson.ifBlank { "{}" }))
                         .put("latitude", report.latitude)
                         .put("longitude", report.longitude)
                         .put("altitude", report.altitude)
@@ -262,6 +342,7 @@ class GeoReportRepository(
                         .put("texturaSolo", report.texturaSolo)
                         .put("compactacao", report.compactacao)
                         .put("photos", photosJson)
+                        .put("audio", audioJson)
                 )
             }
 
@@ -274,15 +355,114 @@ class GeoReportRepository(
             } ?: JSONObject()
 
             val metadataJson = JSONObject()
+                .put("schema_version", "1.0")
                 .put("generatedAt", System.currentTimeMillis())
                 .put("project", projectJson)
+                .put("export", JSONObject().put("original_export_folder_on_device", outputZipFile.parentFile?.absolutePath ?: ""))
                 .put("reports", reportsJson)
                 .toString(2)
 
-            zip.putNextEntry(ZipEntry("metadata/reports.json"))
+            val geoJson = JSONObject()
+                .put("type", "FeatureCollection")
+                .put("features", featuresJson)
+                .toString(2)
+
+            zip.putNextEntry(ZipEntry("report.json"))
             zip.write(metadataJson.toByteArray())
             zip.closeEntry()
+
+            zip.putNextEntry(ZipEntry("map.geojson"))
+            zip.write(geoJson.toByteArray())
+            zip.closeEntry()
         }
+    }
+
+    suspend fun importPortableJson(rawJson: String, mediaBase: File?): String? = withContext(Dispatchers.IO) {
+        val root = JSONObject(rawJson)
+        val reports = root.optJSONArray("reports") ?: return@withContext null
+        var importedProjectId: String? = null
+        for (i in 0 until reports.length()) {
+            val r = reports.optJSONObject(i) ?: continue
+            val reportId = r.optString("id", UUID.randomUUID().toString())
+            val projectId = r.optString("projectId", root.optJSONObject("project")?.optString("id") ?: "IMPORT")
+            importedProjectId = projectId
+            val entity = ReportEntity(
+                id = reportId,
+                projectId = projectId,
+                projectName = r.optString("projectName", root.optJSONObject("project")?.optString("name") ?: "Importado"),
+                projectNumber = r.optString("projectNumber", root.optJSONObject("project")?.optString("number") ?: "IMPORT"),
+                projectCreatedAt = r.optLong("projectCreatedAt", root.optJSONObject("project")?.optLong("createdAt") ?: System.currentTimeMillis()),
+                createdAt = r.optLong("createdAt", System.currentTimeMillis()),
+                inspectionType = r.optString("inspectionType", ""),
+                surveyAnswersJson = r.optJSONObject("surveyAnswers")?.toString() ?: "{}",
+                latitude = r.optDouble("latitude").takeUnless { it.isNaN() },
+                longitude = r.optDouble("longitude").takeUnless { it.isNaN() },
+                altitude = r.optDouble("altitude").takeUnless { it.isNaN() },
+                cultura = r.optString("cultura", ""),
+                cultivar = r.optString("cultivar", ""),
+                faseFenologica = r.optString("faseFenologica", ""),
+                espacamentoLinha = r.optDouble("espacamentoLinha").takeUnless { it.isNaN() },
+                espacamentoEntreLinha = r.optDouble("espacamentoEntreLinha").takeUnless { it.isNaN() },
+                altura = r.optDouble("altura").takeUnless { it.isNaN() },
+                comprimentoPivoRaiz = r.optDouble("comprimentoPivoRaiz").takeUnless { it.isNaN() },
+                distribuicaoSistemaRadicular = r.optString("distribuicaoSistemaRadicular", ""),
+                sanidadeGeral = r.optString("sanidadeGeral", ""),
+                presencaPragas = r.optString("presencaPragas", ""),
+                nomesPragas = r.optString("nomesPragas", ""),
+                intensidadeDanosPragas = r.optString("intensidadeDanosPragas", ""),
+                presencaDoencas = r.optString("presencaDoencas", ""),
+                nomesDoencas = r.optString("nomesDoencas", ""),
+                intensidadeDanosDoencas = r.optString("intensidadeDanosDoencas", ""),
+                presencaDaninhas = r.optString("presencaDaninhas", ""),
+                nomesDaninhas = r.optString("nomesDaninhas", ""),
+                intensidadeInfestacao = r.optString("intensidadeInfestacao", ""),
+                coberturaPalha = r.optString("coberturaPalha", ""),
+                intensidadeErosao = r.optString("intensidadeErosao", ""),
+                corSolo = r.optString("corSolo", ""),
+                texturaSolo = r.optString("texturaSolo", ""),
+                compactacao = r.optString("compactacao", "")
+            )
+            saveReport(entity)
+
+            val photos = r.optJSONArray("photos") ?: JSONArray()
+            for (p in 0 until photos.length()) {
+                val pj = photos.optJSONObject(p) ?: continue
+                val rel = pj.optString("file", pj.optString("zipPath"))
+                val absolute = mediaBase?.resolve(rel)?.absolutePath ?: rel
+                dao.insertPhoto(
+                    GeoPhotoEntity(
+                        id = UUID.randomUUID().toString(),
+                        reportId = reportId,
+                        filePath = absolute,
+                        base64Data = "",
+                        latitude = pj.optDouble("latitude").takeUnless { it.isNaN() },
+                        longitude = pj.optDouble("longitude").takeUnless { it.isNaN() },
+                        capturedAt = pj.optLong("capturedAt", System.currentTimeMillis())
+                    )
+                )
+            }
+        }
+        importedProjectId
+    }
+
+    suspend fun importPortableZip(zipFile: File, outputDir: File): String? = withContext(Dispatchers.IO) {
+        outputDir.mkdirs()
+        ZipFile(zipFile).use { zf ->
+            val entries = zf.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                if (entry.isDirectory) continue
+                val target = outputDir.resolve(entry.name)
+                target.parentFile?.mkdirs()
+                zf.getInputStream(entry).use { input ->
+                    target.outputStream().use { out -> input.copyTo(out) }
+                }
+            }
+        }
+        val reportFile = outputDir.resolve("report.json").takeIf { it.exists() }
+            ?: outputDir.resolve("metadata/reports.json").takeIf { it.exists() }
+            ?: return@withContext null
+        importPortableJson(reportFile.readText(), outputDir)
     }
 
     private fun optimizeJpegFile(filePath: String) {

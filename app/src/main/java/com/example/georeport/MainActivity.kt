@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.media.MediaRecorder
 import android.widget.Toast
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -113,18 +114,15 @@ private fun HomeScreen(
     projects: List<InspectionProject>,
     onOpenProject: (InspectionProject) -> Unit,
     onCreateProject: (name: String, number: String) -> Unit,
-    onImportProjectJson: (String) -> Unit
+    onImportProject: (android.net.Uri) -> Unit,
+    onDeleteProject: (InspectionProject) -> Unit
 ) {
     val context = LocalContext.current
     var name by rememberSaveable { mutableStateOf("") }
     var number by rememberSaveable { mutableStateOf("") }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-            }.getOrNull()?.let(onImportProjectJson)
-        }
+        if (uri != null) onImportProject(uri)
     }
 
     Column(
@@ -146,19 +144,24 @@ private fun HomeScreen(
                 }
             }) { Text("Criar nova vistoria") }
 
-            Button(onClick = { importLauncher.launch(arrayOf("application/json", "text/plain")) }) {
-                Text("Upload JSON")
+            Button(onClick = { importLauncher.launch(arrayOf("application/zip", "application/json", "text/plain")) }) {
+                Text("Upload ZIP/JSON")
             }
         }
 
         HorizontalDivider()
         Text("Vistorias existentes", style = MaterialTheme.typography.titleMedium)
         projects.forEach { project ->
-            Button(onClick = { onOpenProject(project) }, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.fillMaxWidth()) {
-                    Text(project.name, style = MaterialTheme.typography.titleMedium)
-                    Text("Número: ${project.number}")
-                    Text("Criado em: ${formatDate(project.createdAt)}")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { onOpenProject(project) }, modifier = Modifier.weight(1f)) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Text(project.name, style = MaterialTheme.typography.titleMedium)
+                        Text("Número: ${project.number}")
+                        Text("Criado em: ${formatDate(project.createdAt)}")
+                    }
+                }
+                Button(onClick = { onDeleteProject(project) }) {
+                    Text("Excluir")
                 }
             }
         }
@@ -205,10 +208,29 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
                 viewModel.refreshReports(created.id)
                 screen = Screen.MAP
             },
-            onImportProjectJson = { rawJson ->
-                val imported = projectFromJson(rawJson)
-                projects = (projects + imported).distinctBy { it.id }.sortedByDescending { p -> p.createdAt }
-                saveProjects(context, projects)
+            onImportProject = { uri ->
+                viewModel.importDocument(context, uri) { importedProjectId ->
+                    if (importedProjectId.isNullOrBlank()) {
+                        Toast.makeText(context, "Falha ao importar arquivo", Toast.LENGTH_LONG).show()
+                        return@importDocument
+                    }
+                    val imported = InspectionProject(importedProjectId, "Vistoria importada", "IMPORT", System.currentTimeMillis())
+                    projects = (projects + imported).distinctBy { it.id }.sortedByDescending { p -> p.createdAt }
+                    saveProjects(context, projects)
+                    currentProject = imported
+                    viewModel.refreshReports(imported.id)
+                    screen = Screen.MAP
+                }
+            },
+            onDeleteProject = { project ->
+                viewModel.deleteProject(project, File(context.filesDir, "imports/${project.id}")) {
+                    projects = projects.filterNot { it.id == project.id }
+                    saveProjects(context, projects)
+                    if (currentProject?.id == project.id) {
+                        currentProject = null
+                        screen = Screen.HOME
+                    }
+                }
             }
         )
     } else if (screen == Screen.MAP) {
@@ -226,7 +248,9 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
             onExportZip = {
                 if (exportingZip) return@MapScreen
                 exportingZip = true
-                val file = File(context.cacheDir, "relatorios_georeferenciados.zip")
+                val projectSuffix = currentProject?.id ?: "sem_projeto"
+                val dateSuffix = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                val file = File(context.cacheDir, "Relatorio_${projectSuffix}_${dateSuffix}.zip")
                 viewModel.exportZip(file, currentProject?.id) { result ->
                     exportingZip = false
                     result.onSuccess {
@@ -552,6 +576,13 @@ private fun FormScreen(
     var longitude by rememberSaveable(reportId) { mutableStateOf(initialReport?.longitude) }
     var altitude by rememberSaveable(reportId) { mutableStateOf(initialReport?.altitude) }
     var currentPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var currentAudioPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var audioStartedAt by rememberSaveable { mutableStateOf<Long?>(null) }
+    var isRecordingAudio by rememberSaveable { mutableStateOf(false) }
+    var useDynamicTemplate by rememberSaveable(reportId) { mutableStateOf(false) }
+    var templateObs by rememberSaveable(reportId) { mutableStateOf("") }
+    var templateRisco by rememberSaveable(reportId) { mutableStateOf("") }
+    var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var unsaved by rememberSaveable { mutableStateOf(false) }
     var askLeave by rememberSaveable { mutableStateOf(false) }
     val photos by viewModel.photos.collectAsState()
@@ -657,6 +688,13 @@ private fun FormScreen(
 
         DropdownField("1- Cultura", form.cultura, viewModel.culturaOptions) { form = form.copy(cultura = it); unsaved = true }
         DropdownField("Tipo de vistoria", form.inspectionType, viewModel.inspectionTypeOptions) { form = form.copy(inspectionType = it); unsaved = true }
+        Button(onClick = { useDynamicTemplate = !useDynamicTemplate }) {
+            Text(if (useDynamicTemplate) "Usando template dinâmico" else "Usar template dinâmico")
+        }
+        if (useDynamicTemplate) {
+            DropdownField("Template: Risco", templateRisco, listOf("Baixo", "Médio", "Alto")) { templateRisco = it; unsaved = true }
+            TextField("Template: Observações", templateObs) { templateObs = it; unsaved = true }
+        }
         TextField("2- Cultivar", form.cultivar) { form = form.copy(cultivar = it); unsaved = true }
         TextField("3- Fase Fenológica", form.faseFenologica) { form = form.copy(faseFenologica = it); unsaved = true }
         NumberField("4- Espaçamento Linha (m)", form.espacamentoLinha) { form = form.copy(espacamentoLinha = it); unsaved = true }
@@ -706,6 +744,48 @@ private fun FormScreen(
         }
 
         Button(onClick = {
+            if (isRecordingAudio) {
+                runCatching { recorder?.stop() }
+                runCatching { recorder?.release() }
+                recorder = null
+                isRecordingAudio = false
+                val endedAt = System.currentTimeMillis()
+                val startedAt = audioStartedAt ?: endedAt
+                currentAudioPath?.let { path ->
+                    if (File(path).exists()) {
+                        viewModel.saveAudio(
+                            reportId = reportId,
+                            filePath = path,
+                            latitude = latitude,
+                            longitude = longitude,
+                            accuracyMeters = null,
+                            startedAt = startedAt,
+                            endedAt = endedAt
+                        )
+                    }
+                }
+                currentAudioPath = null
+                audioStartedAt = null
+            } else {
+                val audioFile = createAudioFile(context, project?.id ?: reportId)
+                currentAudioPath = audioFile.absolutePath
+                val mediaRecorder = MediaRecorder(context)
+                mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+                mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                mediaRecorder.setOutputFile(audioFile.absolutePath)
+                mediaRecorder.prepare()
+                mediaRecorder.start()
+                recorder = mediaRecorder
+                audioStartedAt = System.currentTimeMillis()
+                isRecordingAudio = true
+            }
+            unsaved = true
+        }) {
+            Text(if (isRecordingAudio) "Parar gravação de áudio" else "Gravar áudio georreferenciado")
+        }
+
+        Button(onClick = {
             val entity = ReportEntity(
                 id = reportId,
                 projectId = project?.id ?: "SEM_PROJETO",
@@ -714,6 +794,10 @@ private fun FormScreen(
                 projectCreatedAt = project?.createdAt ?: System.currentTimeMillis(),
                 createdAt = initialReport?.createdAt ?: System.currentTimeMillis(),
                 inspectionType = form.inspectionType,
+                surveyAnswersJson = JSONObject()
+                    .put("useDynamicTemplate", useDynamicTemplate)
+                    .put("template", JSONObject().put("risco", templateRisco).put("observacoes", templateObs))
+                    .toString(),
                 latitude = latitude,
                 longitude = longitude,
                 altitude = altitude,
@@ -846,6 +930,13 @@ private fun createImageFile(context: Context): File {
     val fileName = "IMG_${formatter.format(Date())}.jpg"
     val picturesDir = File(context.filesDir, "Pictures/GeoReport").apply { mkdirs() }
     return File(picturesDir, fileName)
+}
+
+private fun createAudioFile(context: Context, projectId: String): File {
+    val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+    val fileName = "AUD_${formatter.format(Date())}.m4a"
+    val audioDir = File(context.filesDir, "audio/$projectId").apply { mkdirs() }
+    return File(audioDir, fileName)
 }
 
 private fun esriTileSource(layerName: String): OnlineTileSourceBase {

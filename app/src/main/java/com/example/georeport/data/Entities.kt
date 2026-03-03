@@ -16,6 +16,7 @@ data class ReportEntity(
     val projectCreatedAt: Long,
     val createdAt: Long,
     val inspectionType: String,
+    val surveyAnswersJson: String,
     val latitude: Double?,
     val longitude: Double?,
     val altitude: Double?,
@@ -65,6 +66,30 @@ data class GeoPhotoEntity(
     val latitude: Double?,
     val longitude: Double?,
     val capturedAt: Long,
+    val syncStatus: String = "PENDING_SYNC"
+)
+
+@Entity(
+    tableName = "geo_audio",
+    foreignKeys = [
+        ForeignKey(
+            entity = ReportEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["reportId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index(value = ["reportId"])]
+)
+data class GeoAudioEntity(
+    @PrimaryKey val id: String,
+    val reportId: String,
+    val filePath: String,
+    val latitude: Double?,
+    val longitude: Double?,
+    val accuracyMeters: Double?,
+    val startedAt: Long,
+    val endedAt: Long,
     val syncStatus: String = "PENDING_SYNC"
 )
 

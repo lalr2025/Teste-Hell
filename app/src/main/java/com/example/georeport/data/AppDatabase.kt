@@ -8,9 +8,10 @@ import androidx.room.RoomDatabase
 @Database(
     entities = [
         ReportEntity::class,
-        GeoPhotoEntity::class
+        GeoPhotoEntity::class,
+        GeoAudioEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

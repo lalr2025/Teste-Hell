@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import android.os.Parcelable
 import com.example.georeport.data.GeoPhotoEntity
+import com.example.georeport.data.GeoAudioEntity
 import com.example.georeport.data.ReportEntity
 import com.example.georeport.data.ReportWithPhotos
 import com.example.georeport.domain.GeoReportRepository
@@ -14,6 +15,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
+import android.content.Context
+import android.net.Uri
 
 data class InspectionProject(
     val id: String,
@@ -62,6 +65,9 @@ class ReportViewModel(
     private val _reports = MutableStateFlow<List<ReportWithPhotos>>(emptyList())
     val reports: StateFlow<List<ReportWithPhotos>> = _reports.asStateFlow()
 
+    private val _audios = MutableStateFlow<List<GeoAudioEntity>>(emptyList())
+    val audios: StateFlow<List<GeoAudioEntity>> = _audios.asStateFlow()
+
     val culturaOptions = listOf(
         "Abacate", "Aveia", "Café", "Cana", "Laranja", "Limão", "Milho", "Sorgo", "Soja", "Trigo", "Amendoim", "Cobertura Verde"
     )
@@ -90,6 +96,7 @@ class ReportViewModel(
     fun loadPhotos(reportId: String) {
         viewModelScope.launch {
             _photos.value = repository.photosByReport(reportId)
+            _audios.value = repository.audiosByReport(reportId)
         }
     }
 
@@ -136,6 +143,52 @@ class ReportViewModel(
     fun exportZip(file: File, projectId: String?, onDone: (Result<Unit>) -> Unit) {
         viewModelScope.launch {
             val result = runCatching { repository.exportReportsZip(file, projectId) }
+            onDone(result)
+        }
+    }
+
+    fun saveAudio(
+        reportId: String,
+        filePath: String,
+        latitude: Double?,
+        longitude: Double?,
+        accuracyMeters: Double?,
+        startedAt: Long,
+        endedAt: Long
+    ) {
+        viewModelScope.launch {
+            repository.saveAudio(reportId, filePath, latitude, longitude, accuracyMeters, startedAt, endedAt)
+            _audios.value = repository.audiosByReport(reportId)
+        }
+    }
+
+    fun deleteProject(project: InspectionProject, projectMediaDir: File?, onDone: () -> Unit) {
+        viewModelScope.launch {
+            repository.deleteProject(project.id, projectMediaDir)
+            refreshReports(null)
+            onDone()
+        }
+    }
+
+    fun importDocument(context: Context, uri: Uri, onDone: (String?) -> Unit) {
+        viewModelScope.launch {
+            val result = runCatching {
+                val name = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                    val i = c.getColumnIndex("_display_name")
+                    if (c.moveToFirst() && i >= 0) c.getString(i) else "import"
+                } ?: "import"
+                if (name.lowercase().endsWith(".zip")) {
+                    val tempZip = File(context.cacheDir, "import_${System.currentTimeMillis()}.zip")
+                    context.contentResolver.openInputStream(uri)!!.use { input ->
+                        tempZip.outputStream().use { input.copyTo(it) }
+                    }
+                    val outDir = File(context.filesDir, "imports/${System.currentTimeMillis()}")
+                    repository.importPortableZip(tempZip, outDir)
+                } else {
+                    val raw = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    repository.importPortableJson(raw, null)
+                }
+            }.getOrNull()
             onDone(result)
         }
     }
