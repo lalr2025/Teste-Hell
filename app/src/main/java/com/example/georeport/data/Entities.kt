@@ -99,5 +99,10 @@ data class ReportWithPhotos(
         parentColumn = "id",
         entityColumn = "reportId"
     )
-    val photos: List<GeoPhotoEntity>
+    val photos: List<GeoPhotoEntity>,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "reportId"
+    )
+    val audios: List<GeoAudioEntity>
 )

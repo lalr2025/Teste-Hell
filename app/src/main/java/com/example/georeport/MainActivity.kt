@@ -4,7 +4,11 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.media.MediaPlayer
 import android.media.MediaRecorder
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
 import android.widget.Toast
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -58,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.app.NotificationCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.georeport.data.AppDatabase
 import com.example.georeport.data.ReportEntity
@@ -117,6 +122,9 @@ private enum class BasemapOption {
     SATELITE_ESRI,
     TOPOGRAFIA_ESRI
 }
+
+private const val AUDIO_RECORD_CHANNEL_ID = "audio_recording_channel"
+private const val AUDIO_RECORD_NOTIFICATION_ID = 10041
 
 @Composable
 private fun HomeScreen(
@@ -598,6 +606,19 @@ private fun MapScreen(
 
 @Composable
 private fun ReportDetailDialog(report: ReportWithPhotos, onDismiss: () -> Unit, onEdit: () -> Unit) {
+    val context = LocalContext.current
+    var playingAudioId by remember { mutableStateOf<String?>(null) }
+    var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching { mediaPlayer?.stop() }
+            runCatching { mediaPlayer?.release() }
+            mediaPlayer = null
+            playingAudioId = null
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("🌱 ${report.report.cultura}") },
@@ -624,6 +645,50 @@ private fun ReportDetailDialog(report: ReportWithPhotos, onDismiss: () -> Unit, 
                             modifier = Modifier.fillMaxWidth().height(180.dp),
                             contentScale = ContentScale.Crop
                         )
+                    }
+                }
+
+                HorizontalDivider()
+                Text("Áudios (${report.audios.size})")
+                report.audios.forEachIndexed { index, audio ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("${index + 1}. ${File(audio.filePath).name}", modifier = Modifier.weight(1f))
+                        Button(onClick = {
+                            if (playingAudioId == audio.id) {
+                                runCatching { mediaPlayer?.stop() }
+                                runCatching { mediaPlayer?.release() }
+                                mediaPlayer = null
+                                playingAudioId = null
+                            } else {
+                                runCatching { mediaPlayer?.stop() }
+                                runCatching { mediaPlayer?.release() }
+                                mediaPlayer = null
+
+                                runCatching {
+                                    MediaPlayer().apply {
+                                        setDataSource(audio.filePath)
+                                        setOnCompletionListener {
+                                            runCatching { it.release() }
+                                            mediaPlayer = null
+                                            playingAudioId = null
+                                        }
+                                        prepare()
+                                        start()
+                                    }
+                                }.onSuccess {
+                                    mediaPlayer = it
+                                    playingAudioId = audio.id
+                                }.onFailure {
+                                    Toast.makeText(context, "Falha ao reproduzir áudio", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }) {
+                            Text(if (playingAudioId == audio.id) "Parar" else "Reproduzir")
+                        }
                     }
                 }
             }
@@ -724,6 +789,7 @@ private fun FormScreen(
             arrayOf(
                 Manifest.permission.CAMERA,
                 Manifest.permission.RECORD_AUDIO,
+                Manifest.permission.POST_NOTIFICATIONS,
                 Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION
             )
@@ -745,7 +811,14 @@ private fun FormScreen(
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            runCatching { recorder?.stop() }
+            runCatching { recorder?.release() }
+            recorder = null
+            isRecordingAudio = false
+            cancelAudioRecordingNotification(context)
+        }
     }
 
     if (askLeave) {
@@ -839,6 +912,7 @@ private fun FormScreen(
                 runCatching { recorder?.release() }
                 recorder = null
                 isRecordingAudio = false
+                cancelAudioRecordingNotification(context)
                 val endedAt = System.currentTimeMillis()
                 val startedAt = audioStartedAt ?: endedAt
                 currentAudioPath?.let { path ->
@@ -865,6 +939,12 @@ private fun FormScreen(
                     requestPermissionsLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
                     return@Button
                 }
+                val canNotify = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                if (!canNotify && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    requestPermissionsLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                }
+
                 val audioFile = createAudioFile(context, project?.id ?: reportId)
                 currentAudioPath = audioFile.absolutePath
                 runCatching {
@@ -878,9 +958,12 @@ private fun FormScreen(
                     recorder = mediaRecorder
                     audioStartedAt = System.currentTimeMillis()
                     isRecordingAudio = true
+                    showAudioRecordingNotification(context)
                 }.onFailure {
                     recorder = null
                     currentAudioPath = null
+                    isRecordingAudio = false
+                    cancelAudioRecordingNotification(context)
                     Toast.makeText(context, "Falha ao iniciar gravação de áudio: ${it.message}", Toast.LENGTH_LONG).show()
                 }
             }
@@ -1089,6 +1172,37 @@ private fun ReportEntity.toFormState(): ReportFormState = ReportFormState(
 )
 
 
+
+
+private fun showAudioRecordingNotification(context: Context) {
+    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val channel = NotificationChannel(
+            AUDIO_RECORD_CHANNEL_ID,
+            "Gravação de áudio",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Exibe quando o áudio georreferenciado está sendo gravado"
+            setShowBadge(false)
+        }
+        manager.createNotificationChannel(channel)
+    }
+
+    val notification = NotificationCompat.Builder(context, AUDIO_RECORD_CHANNEL_ID)
+        .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+        .setContentTitle("GeoReport")
+        .setContentText("Gravação de áudio em andamento")
+        .setOngoing(true)
+        .setOnlyAlertOnce(true)
+        .build()
+
+    manager.notify(AUDIO_RECORD_NOTIFICATION_ID, notification)
+}
+
+private fun cancelAudioRecordingNotification(context: Context) {
+    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    manager.cancel(AUDIO_RECORD_NOTIFICATION_ID)
+}
 
 private fun appVersionName(context: Context): String = runCatching {
     context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "-"
