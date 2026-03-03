@@ -394,6 +394,7 @@ private fun MapScreen(
 ) {
     val context = LocalContext.current
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+    var mapViewRef by remember { mutableStateOf<MapView?>(null) }
     var basemap by rememberSaveable(projectId) { mutableStateOf(BasemapOption.ESTRADAS_ESRI) }
     var showLayers by rememberSaveable(projectId) { mutableStateOf(false) }
     var expandedClusterKey by rememberSaveable(projectId) { mutableStateOf<String?>(null) }
@@ -473,9 +474,11 @@ private fun MapScreen(
                             setMultiTouchControls(true)
                             controller.setZoom(4.5)
                             controller.setCenter(GeoPoint(-14.235, -51.925))
+                            mapViewRef = this
                         }
                     },
                     update = { mapView ->
+                mapViewRef = mapView
                 Configuration.getInstance().userAgentValue = context.packageName
 
                 mapView.setUseDataConnection(!offlineMode)
@@ -631,9 +634,9 @@ private fun MapScreen(
                                     Toast.makeText(context, "Localização indisponível", Toast.LENGTH_SHORT).show()
                                     return@addOnSuccessListener
                                 }
-                                mapView.controller.setCenter(GeoPoint(location.latitude, location.longitude))
-                                mapView.controller.setZoom(17.0)
-                                mapView.invalidate()
+                                mapViewRef?.controller?.setCenter(GeoPoint(location.latitude, location.longitude))
+                                mapViewRef?.controller?.setZoom(17.0)
+                                mapViewRef?.invalidate()
                             }
                             .addOnFailureListener {
                                 Toast.makeText(context, "Falha ao obter localização atual", Toast.LENGTH_SHORT).show()
