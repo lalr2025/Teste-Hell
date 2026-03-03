@@ -95,7 +95,8 @@ private data class ProjectQuestion(
     val id: String,
     val label: String,
     val type: String,
-    val options: List<String>
+    val options: List<String>,
+    val required: Boolean = false
 )
 
 class MainActivity : ComponentActivity() {
@@ -122,6 +123,8 @@ private enum class BasemapOption {
     SATELITE_ESRI,
     TOPOGRAFIA_ESRI
 }
+
+private val SUPPORTED_QUESTION_TYPES = listOf("text", "number", "dropdown", "date", "boolean", "photo", "audio")
 
 private const val AUDIO_RECORD_CHANNEL_ID = "audio_recording_channel"
 private const val AUDIO_RECORD_NOTIFICATION_ID = 10041
@@ -168,11 +171,12 @@ private fun HomeScreen(
                                         .put("id", q.id)
                                         .put("label", q.label)
                                         .put("type", q.type)
+                                        .put("required", q.required)
                                         .put("options", JSONArray(q.options))
                                 )
                             }
                         }.toString()
-                    } else "[]"
+                    } else defaultProjectQuestionsJson()
 
                     onCreateProject(
                         name.trim(),
@@ -199,8 +203,8 @@ private fun HomeScreen(
         if (customQuestionnaire) {
             Text("Monte até 50 perguntas. Após criar o projeto, não será possível adicionar mais perguntas.")
             OutlinedTextField(newQuestionLabel, { newQuestionLabel = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Pergunta") })
-            DropdownField("Tipo de resposta", newQuestionType, listOf("text", "select")) { newQuestionType = it }
-            if (newQuestionType == "select") {
+            DropdownField("Tipo de resposta", newQuestionType, SUPPORTED_QUESTION_TYPES) { newQuestionType = it }
+            if (newQuestionType == "dropdown") {
                 OutlinedTextField(
                     newQuestionOptions,
                     { newQuestionOptions = it },
@@ -210,7 +214,7 @@ private fun HomeScreen(
             }
             Button(onClick = {
                 if (customQuestions.size >= 50 || newQuestionLabel.isBlank()) return@Button
-                val options = if (newQuestionType == "select") newQuestionOptions.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
+                val options = if (newQuestionType == "dropdown") newQuestionOptions.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
                 customQuestions.add(ProjectQuestion(UUID.randomUUID().toString(), newQuestionLabel.trim(), newQuestionType, options))
                 newQuestionLabel = ""
                 newQuestionOptions = ""
@@ -295,7 +299,10 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
                         Toast.makeText(context, "Falha ao importar arquivo", Toast.LENGTH_LONG).show()
                         return@importDocument
                     }
-                    val imported = InspectionProject(importedProjectId, "Vistoria importada", "IMPORT", System.currentTimeMillis())
+                    val imported = runCatching {
+                        context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { projectFromJson(it.readText()) }
+                    }.getOrNull()?.copy(id = importedProjectId)
+                        ?: InspectionProject(importedProjectId, "Vistoria importada", "IMPORT", System.currentTimeMillis(), "IMPORT_NO_QUESTIONS", "[]")
                     projects = (projects + imported).distinctBy { it.id }.sortedByDescending { p -> p.createdAt }
                     saveProjects(context, projects)
                     currentProject = imported
@@ -316,6 +323,7 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
         )
     } else if (screen == Screen.MAP) {
         MapScreen(
+            projectId = currentProject?.id,
             reports = reports,
             onNewReport = {
                 editingReport = null
@@ -376,6 +384,7 @@ private fun GeoReportApp(viewModel: ReportViewModel) {
 
 @Composable
 private fun MapScreen(
+    projectId: String?,
     reports: List<ReportWithPhotos>,
     onNewReport: () -> Unit,
     onBackHome: () -> Unit,
@@ -384,11 +393,12 @@ private fun MapScreen(
     onExportZip: () -> Unit
 ) {
     val context = LocalContext.current
-    var basemap by rememberSaveable { mutableStateOf(BasemapOption.ESTRADAS_ESRI) }
-    var showLayers by rememberSaveable { mutableStateOf(false) }
-    var expandedClusterKey by rememberSaveable { mutableStateOf<String?>(null) }
-    var offlineMode by rememberSaveable { mutableStateOf(false) }
-    var autoCentered by rememberSaveable { mutableStateOf(false) }
+    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+    var basemap by rememberSaveable(projectId) { mutableStateOf(BasemapOption.ESTRADAS_ESRI) }
+    var showLayers by rememberSaveable(projectId) { mutableStateOf(false) }
+    var expandedClusterKey by rememberSaveable(projectId) { mutableStateOf<String?>(null) }
+    var offlineMode by rememberSaveable(projectId) { mutableStateOf(false) }
+    var autoCentered by rememberSaveable(projectId) { mutableStateOf(false) }
 
     val roadsSource = remember { esriTileSource("World_Street_Map") }
     val satelliteSource = remember { esriTileSource("World_Imagery") }
@@ -407,7 +417,6 @@ private fun MapScreen(
             Button(onClick = onRefreshMap) { Text("Atualizar mapa") }
             Button(onClick = onExportZip) { Text("Baixar ZIP") }
             Text("v${appVersionName(context)}")
-            Button(onClick = { showLayers = true }) { Text("🗺 Camadas") }
             Button(onClick = {
                 offlineMode = !offlineMode
                 Toast.makeText(
@@ -598,6 +607,43 @@ private fun MapScreen(
                         .padding(12.dp)
                 ) {
                     Text("🗺 Camadas")
+                }
+
+                Button(
+                    onClick = {
+                        val hasLocation = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ACCESS_FINE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED ||
+                            ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.ACCESS_COARSE_LOCATION
+                            ) == PackageManager.PERMISSION_GRANTED
+
+                        if (!hasLocation) {
+                            Toast.makeText(context, "Permita localização para centralizar o mapa", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+
+                        fusedLocationClient.lastLocation
+                            .addOnSuccessListener { location ->
+                                if (location == null) {
+                                    Toast.makeText(context, "Localização indisponível", Toast.LENGTH_SHORT).show()
+                                    return@addOnSuccessListener
+                                }
+                                mapView.controller.setCenter(GeoPoint(location.latitude, location.longitude))
+                                mapView.controller.setZoom(17.0)
+                                mapView.invalidate()
+                            }
+                            .addOnFailureListener {
+                                Toast.makeText(context, "Falha ao obter localização atual", Toast.LENGTH_SHORT).show()
+                            }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 68.dp, end = 12.dp)
+                ) {
+                    Text("📍 Centralizar")
                 }
             }
         }
@@ -809,7 +855,7 @@ private fun FormScreen(
                     refreshLocation()
                 }
                 viewModel.loadPhotos(reportId)
-                viewModel.refreshReports()
+                viewModel.refreshReports(project?.id)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -842,47 +888,61 @@ private fun FormScreen(
         Text("Lat/Lon: ${latitude ?: "-"} / ${longitude ?: "-"}")
         Text("Altitude: ${altitude ?: "-"}")
 
-        DropdownField("1- Cultura", form.cultura, viewModel.culturaOptions) { form = form.copy(cultura = it); unsaved = true }
-        DropdownField("Tipo de vistoria", form.inspectionType, viewModel.inspectionTypeOptions) { form = form.copy(inspectionType = it); unsaved = true }
-        if (project?.questionnaireMode == "CUSTOM") {
-            Text("Questionário customizado do projeto", style = MaterialTheme.typography.titleMedium)
-            customQuestions.forEach { q ->
-                if (q.type == "select") {
-                    DropdownField(q.label, customAnswers[q.id].orEmpty(), q.options) {
-                        customAnswers[q.id] = it
-                        unsaved = true
+        if (customQuestions.isEmpty()) {
+            Text(
+                "Projeto importado sem perguntas",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.titleMedium
+            )
+        } else {
+            customQuestions.forEachIndexed { index, q ->
+                when (q.type.lowercase()) {
+                    "dropdown" -> {
+                        DropdownField(
+                            "${index + 1}- ${q.label}",
+                            customAnswers[q.id].orEmpty(),
+                            q.options
+                        ) {
+                            customAnswers[q.id] = it
+                            unsaved = true
+                        }
                     }
-                } else {
-                    TextField(q.label, customAnswers[q.id].orEmpty()) {
-                        customAnswers[q.id] = it
-                        unsaved = true
+                    "number", "date", "text" -> {
+                        TextField("${index + 1}- ${q.label}", customAnswers[q.id].orEmpty()) {
+                            customAnswers[q.id] = it
+                            unsaved = true
+                        }
+                    }
+                    "boolean" -> {
+                        DropdownField(
+                            "${index + 1}- ${q.label}",
+                            customAnswers[q.id].orEmpty(),
+                            listOf("Sim", "Não")
+                        ) {
+                            customAnswers[q.id] = it
+                            unsaved = true
+                        }
+                    }
+                    "photo" -> {
+                        Text("${index + 1}- ${q.label}")
+                    }
+                    "audio" -> {
+                        Text("${index + 1}- ${q.label}")
+                    }
+                    else -> {
+                        TextField("${index + 1}- ${q.label}", customAnswers[q.id].orEmpty()) {
+                            customAnswers[q.id] = it
+                            unsaved = true
+                        }
                     }
                 }
             }
         }
-        TextField("2- Cultivar", form.cultivar) { form = form.copy(cultivar = it); unsaved = true }
-        TextField("3- Fase Fenológica", form.faseFenologica) { form = form.copy(faseFenologica = it); unsaved = true }
-        NumberField("4- Espaçamento Linha (m)", form.espacamentoLinha) { form = form.copy(espacamentoLinha = it); unsaved = true }
-        NumberField("5- Espaçamento Entre Linha (m)", form.espacamentoEntreLinha) { form = form.copy(espacamentoEntreLinha = it); unsaved = true }
-        NumberField("6- Altura (m)", form.altura) { form = form.copy(altura = it); unsaved = true }
-        NumberField("7- Comprimento do Pivo (Raiz)", form.comprimentoPivoRaiz) { form = form.copy(comprimentoPivoRaiz = it); unsaved = true }
-        DropdownField("8- Distribuição Sistema Radicular", form.distribuicaoSistemaRadicular, viewModel.qualidadeOptions) { form = form.copy(distribuicaoSistemaRadicular = it); unsaved = true }
-        DropdownField("9- Sanidade Geral", form.sanidadeGeral, viewModel.qualidadeOptions) { form = form.copy(sanidadeGeral = it); unsaved = true }
-        DropdownField("10- Presença de Pragas", form.presencaPragas, viewModel.simNaoOptions) { form = form.copy(presencaPragas = it); unsaved = true }
-        TextField("11- Nome(s) da(s) praga(s)", form.nomesPragas) { form = form.copy(nomesPragas = it); unsaved = true }
-        DropdownField("12- Intensidade dos Danos (pragas)", form.intensidadeDanosPragas, viewModel.intensidadeOptions) { form = form.copy(intensidadeDanosPragas = it); unsaved = true }
-        DropdownField("13- Presença de Doenças", form.presencaDoencas, viewModel.simNaoOptions) { form = form.copy(presencaDoencas = it); unsaved = true }
-        TextField("14- Nome(s) da(s) Doença(s)", form.nomesDoencas) { form = form.copy(nomesDoencas = it); unsaved = true }
-        DropdownField("15- Intensidade dos Danos (doenças)", form.intensidadeDanosDoencas, viewModel.intensidadeOptions) { form = form.copy(intensidadeDanosDoencas = it); unsaved = true }
-        DropdownField("16- Presença de Daninhas", form.presencaDaninhas, viewModel.simNaoOptions) { form = form.copy(presencaDaninhas = it); unsaved = true }
-        TextField("17- Nome(s) da(s) Daninha(s)", form.nomesDaninhas) { form = form.copy(nomesDaninhas = it); unsaved = true }
-        DropdownField("18- Intensidade da Infestação", form.intensidadeInfestacao, viewModel.intensidadeOptions) { form = form.copy(intensidadeInfestacao = it); unsaved = true }
-        DropdownField("18- Cobertura de Palha", form.coberturaPalha, viewModel.coberturaOptions) { form = form.copy(coberturaPalha = it); unsaved = true }
-        DropdownField("19- Intensidade Erosão", form.intensidadeErosao, viewModel.erosaoOptions) { form = form.copy(intensidadeErosao = it); unsaved = true }
-        TextField("20- Cor do Solo", form.corSolo) { form = form.copy(corSolo = it); unsaved = true }
-        DropdownField("21- Textura Solo", form.texturaSolo, viewModel.texturaOptions) { form = form.copy(texturaSolo = it); unsaved = true }
-        DropdownField("22- Compactação", form.compactacao, viewModel.compactacaoOptions) { form = form.copy(compactacao = it); unsaved = true }
 
+        val hasPhotoQuestion = customQuestions.any { it.type.equals("photo", ignoreCase = true) }
+        val hasAudioQuestion = customQuestions.any { it.type.equals("audio", ignoreCase = true) }
+
+        if (hasPhotoQuestion) {
         Button(onClick = {
             if (photos.size >= 5) return@Button
 
@@ -908,6 +968,9 @@ private fun FormScreen(
             Text("Adicionar foto (${photos.size}/5)")
         }
 
+        }
+
+        if (hasAudioQuestion) {
         Button(onClick = {
             if (isRecordingAudio) {
                 runCatching { recorder?.stop() }
@@ -920,6 +983,10 @@ private fun FormScreen(
                 currentAudioPath?.let { path ->
                     if (File(path).exists()) {
                         project?.let {
+                            val selectedInspectionType = customQuestions.firstOrNull {
+                                it.label.contains("tipo de vistoria", ignoreCase = true)
+                            }?.let { question -> customAnswers[question.id].orEmpty() }.orEmpty()
+
                             viewModel.saveAudio(
                                 reportId = reportId,
                                 project = it,
@@ -929,7 +996,7 @@ private fun FormScreen(
                                 accuracyMeters = null,
                                 startedAt = startedAt,
                                 endedAt = endedAt,
-                                inspectionType = form.inspectionType,
+                                inspectionType = selectedInspectionType,
                                 altitude = altitude
                             )
                         }
@@ -979,7 +1046,23 @@ private fun FormScreen(
             Text(if (isRecordingAudio) "Parar gravação de áudio" else "Gravar áudio georreferenciado")
         }
 
+        }
+
         Button(onClick = {
+            if (customQuestions.isEmpty()) {
+                Toast.makeText(context, "Projeto importado sem perguntas", Toast.LENGTH_LONG).show()
+                return@Button
+            }
+
+            fun findAnswer(vararg labels: String): String {
+                val key = customQuestions.firstOrNull { q ->
+                    labels.any { label -> q.label.contains(label, ignoreCase = true) }
+                }?.id
+                return key?.let { customAnswers[it].orEmpty() }.orEmpty()
+            }
+
+            fun findNumber(vararg labels: String): Double? = findAnswer(*labels).replace(',', '.').toDoubleOrNull()
+
             val entity = ReportEntity(
                 id = reportId,
                 projectId = project?.id ?: "SEM_PROJETO",
@@ -987,38 +1070,38 @@ private fun FormScreen(
                 projectNumber = project?.number ?: "-",
                 projectCreatedAt = project?.createdAt ?: System.currentTimeMillis(),
                 createdAt = initialReport?.createdAt ?: System.currentTimeMillis(),
-                inspectionType = form.inspectionType,
+                inspectionType = findAnswer("tipo de vistoria"),
                 surveyAnswersJson = JSONObject().apply {
                     customAnswers.forEach { (key, value) -> put(key, value) }
                 }.toString(),
                 latitude = latitude,
                 longitude = longitude,
                 altitude = altitude,
-                cultura = form.cultura,
-                cultivar = form.cultivar,
-                faseFenologica = form.faseFenologica,
-                espacamentoLinha = form.espacamentoLinha.toDoubleOrNull(),
-                espacamentoEntreLinha = form.espacamentoEntreLinha.toDoubleOrNull(),
-                altura = form.altura.toDoubleOrNull(),
-                comprimentoPivoRaiz = form.comprimentoPivoRaiz.toDoubleOrNull(),
-                distribuicaoSistemaRadicular = form.distribuicaoSistemaRadicular,
-                sanidadeGeral = form.sanidadeGeral,
-                presencaPragas = form.presencaPragas,
-                nomesPragas = form.nomesPragas,
-                intensidadeDanosPragas = form.intensidadeDanosPragas,
-                presencaDoencas = form.presencaDoencas,
-                nomesDoencas = form.nomesDoencas,
-                intensidadeDanosDoencas = form.intensidadeDanosDoencas,
-                presencaDaninhas = form.presencaDaninhas,
-                nomesDaninhas = form.nomesDaninhas,
-                intensidadeInfestacao = form.intensidadeInfestacao,
-                coberturaPalha = form.coberturaPalha,
-                intensidadeErosao = form.intensidadeErosao,
-                corSolo = form.corSolo,
-                texturaSolo = form.texturaSolo,
-                compactacao = form.compactacao
+                cultura = findAnswer("cultura"),
+                cultivar = findAnswer("cultivar"),
+                faseFenologica = findAnswer("fenolog"),
+                espacamentoLinha = findNumber("espaçamento linha"),
+                espacamentoEntreLinha = findNumber("espaçamento entre", "entre linha"),
+                altura = findNumber("altura"),
+                comprimentoPivoRaiz = findNumber("comprimento", "raiz"),
+                distribuicaoSistemaRadicular = findAnswer("distribuição sistema radicular"),
+                sanidadeGeral = findAnswer("sanidade geral"),
+                presencaPragas = findAnswer("presença de pragas"),
+                nomesPragas = findAnswer("nome(s) da(s) praga"),
+                intensidadeDanosPragas = findAnswer("intensidade dos danos (pragas)"),
+                presencaDoencas = findAnswer("presença de doenças"),
+                nomesDoencas = findAnswer("nome(s) da(s) doença"),
+                intensidadeDanosDoencas = findAnswer("intensidade dos danos (doenças)"),
+                presencaDaninhas = findAnswer("presença de daninhas"),
+                nomesDaninhas = findAnswer("nome(s) da(s) daninha"),
+                intensidadeInfestacao = findAnswer("intensidade da infestação"),
+                coberturaPalha = findAnswer("cobertura de palha"),
+                intensidadeErosao = findAnswer("intensidade eros"),
+                corSolo = findAnswer("cor do solo"),
+                texturaSolo = findAnswer("textura solo"),
+                compactacao = findAnswer("compactação")
             )
-            viewModel.saveReport(entity)
+            viewModel.saveReport(entity, project?.id)
             unsaved = false
             onFinish()
         }) {
@@ -1261,13 +1344,17 @@ private fun saveProjects(context: Context, projects: List<InspectionProject>) {
 private fun projectFromJson(rawJson: String): InspectionProject {
     val root = JSONObject(rawJson)
     val firstReport = root.optJSONArray("reports")?.optJSONObject(0)
+    val questionsArray = root.optJSONObject("project")?.optJSONArray("questions")
+        ?: root.optJSONArray("questions")
+        ?: JSONArray()
+    val hasQuestions = questionsArray.length() > 0
     return InspectionProject(
         id = firstReport?.optString("projectId").takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString(),
         name = firstReport?.optString("projectName").takeUnless { it.isNullOrBlank() } ?: "Vistoria importada",
         number = firstReport?.optString("projectNumber").takeUnless { it.isNullOrBlank() } ?: "IMPORT",
         createdAt = firstReport?.optLong("projectCreatedAt") ?: System.currentTimeMillis(),
-        questionnaireMode = "DEFAULT",
-        questionsJson = "[]"
+        questionnaireMode = if (hasQuestions) "IMPORTED" else "IMPORT_NO_QUESTIONS",
+        questionsJson = questionsArray.toString()
     )
 }
 
@@ -1281,17 +1368,70 @@ private fun parseProjectQuestions(raw: String?): List<ProjectQuestion> {
                 ProjectQuestion(
                     id = o.optString("id", UUID.randomUUID().toString()),
                     label = o.optString("label", "Pergunta"),
-                    type = o.optString("type", "text"),
+                    type = o.optString("type", "text").lowercase().let { if (it == "select") "dropdown" else it },
                     options = buildList {
                         if (options != null) {
                             for (j in 0 until options.length()) add(options.optString(j))
                         }
-                    }
+                    },
+                    required = o.optBoolean("required", false)
                 )
             )
         }
     }
 }
+
+private fun defaultProjectQuestionsJson(): String = JSONArray().apply {
+    fun add(id: String, label: String, type: String, options: List<String> = emptyList()) {
+        put(
+            JSONObject()
+                .put("id", id)
+                .put("label", label)
+                .put("type", type)
+                .put("required", false)
+                .put("options", JSONArray(options))
+        )
+    }
+
+    add("inspectionType", "Tipo de vistoria", "dropdown", listOf(
+        "Monitoramento Pragas/Doenças/Daninhas",
+        "Monitoramento Pragas/Doenças",
+        "Monitoramento Daninhas",
+        "Monitoramento Pragas",
+        "Monitoramento Doenças",
+        "Aptidão",
+        "Amostra Solo",
+        "Estimativa Produtividade",
+        "Amostra Foliar",
+        "Vistoria Preliminar",
+        "Vistoria Final"
+    ))
+    add("cultura", "Cultura", "dropdown", listOf("Abacate", "Aveia", "Café", "Cana", "Laranja", "Limão", "Milho", "Sorgo", "Soja", "Trigo", "Amendoim", "Cobertura Verde"))
+    add("cultivar", "Cultivar", "text")
+    add("fase", "Fase Fenológica", "text")
+    add("esp_linha", "Espaçamento Linha (m)", "number")
+    add("esp_entre", "Espaçamento Entre Linha (m)", "number")
+    add("altura", "Altura (m)", "number")
+    add("raiz", "Comprimento do Pivo (Raiz)", "number")
+    add("dist_rad", "Distribuição Sistema Radicular", "dropdown", listOf("Bom", "Regular", "Ruim"))
+    add("sanidade", "Sanidade Geral", "dropdown", listOf("Bom", "Regular", "Ruim"))
+    add("pragas", "Presença de Pragas", "boolean")
+    add("nomes_pragas", "Nome(s) da(s) praga(s)", "text")
+    add("int_pragas", "Intensidade dos Danos (pragas)", "dropdown", listOf("Alta", "Moderada", "Baixa"))
+    add("doencas", "Presença de Doenças", "boolean")
+    add("nomes_doencas", "Nome(s) da(s) Doença(s)", "text")
+    add("int_doencas", "Intensidade dos Danos (doenças)", "dropdown", listOf("Alta", "Moderada", "Baixa"))
+    add("daninhas", "Presença de Daninhas", "boolean")
+    add("nomes_daninhas", "Nome(s) da(s) Daninha(s)", "text")
+    add("int_daninhas", "Intensidade da Infestação", "dropdown", listOf("Alta", "Moderada", "Baixa"))
+    add("palha", "Cobertura de Palha", "dropdown", listOf("Boa", "Média", "Ruim"))
+    add("erosao", "Intensidade Erosão", "dropdown", listOf("Alta", "Média", "Baixa"))
+    add("cor_solo", "Cor do Solo", "text")
+    add("textura", "Textura Solo", "dropdown", listOf("Arenoso", "Textura Média", "Argiloso"))
+    add("compactacao", "Compactação", "dropdown", listOf("Alta", "Moderada", "Baixa", "Nenhuma"))
+    add("fotos", "Fotos", "photo")
+    add("audio", "Áudio", "audio")
+}.toString()
 
 private fun parseAnswersMap(raw: String?): Map<String, String> {
     val obj = JSONObject(raw ?: "{}")

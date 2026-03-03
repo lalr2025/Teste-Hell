@@ -108,10 +108,10 @@ class ReportViewModel(
         }
     }
 
-    fun saveReport(report: ReportEntity) {
+    fun saveReport(report: ReportEntity, projectId: String?) {
         viewModelScope.launch {
             repository.saveReport(report)
-            refreshReports()
+            refreshReports(projectId)
         }
     }
 
