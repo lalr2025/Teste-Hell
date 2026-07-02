@@ -46,3 +46,7 @@ tabela_picos_pdsi = gerar_mapas_picos_pdsi(
 ```
 
 Para testar rapidamente antes de gerar o produto mensal completo, use `passo_meses=3` ou `passo_meses=12`.
+
+## Célula de recuperação se o final do notebook foi apagado
+
+Se o fim da célula original foi apagado, use `notebook_cells/pdsi_enso_recovery_tail.py` como célula de recuperação. Ela deve ser colada depois das células que já carregaram `da_pdsi`, `df_enso_mapas` e definiram as funções de plotagem. A célula começa em modo `TESTE_RAPIDO = True`, com `passo_meses=3`, para validar o resultado antes do GIF mensal completo.
